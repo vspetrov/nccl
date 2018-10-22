@@ -18,6 +18,9 @@
 #include <stdlib.h>
 #include <cuda_runtime.h>
 
+#include "sharp/api/version.h"
+#include "sharp/api/sharp_coll.h"
+
 #if __CUDACC_VER_MAJOR__ < 9
 struct cudaLaunchParams {
   void *func;

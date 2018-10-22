@@ -717,21 +717,21 @@ ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId comm
                   /* Initialize sharp communicator */
                   struct sharp_coll_context *sharpCtx = NULL;
                   struct sharp_coll_comm_init_spec comm_spec;
-                  int *gwr = NULL;
+                  uint32_t *gwr = NULL;
                   comm_spec.rank      = netLocalRank;
                   comm_spec.size      = nnodes;
 #if SHARP_API > SHARP_VERSION(1,4)
-                  gwr = (int*)malloc(nnodes*sizeof(int));
+                  gwr = (uint32_t*)malloc(nnodes*sizeof(uint32_t));
                   for (i=0; i<nnodes; i++) {
                       gwr[i] = i;
                   }
                   comm_spec.group_world_ranks = gwr;
 #endif
                   comm_spec.is_comm_world = 1;
-                  comm_spec.oob_ctx   = (void*)(*newcomm)->net_comm;
+                  comm_spec.oob_ctx   = (void*)(*newcomm)->netComm;
 
-                  ret = sharp_coll_comm_init(sharpCtx, &comm_spec,
-                                             (struct sharp_coll_comm **)&newcomm->sharpComm);
+                  int ret = sharp_coll_comm_init(sharpCtx, &comm_spec,
+                                                 (struct sharp_coll_comm **)&(*newcomm)->sharpComm);
                   if (gwr) free(gwr);
                   if (ret < 0) {
                       if (myrank == 0)
