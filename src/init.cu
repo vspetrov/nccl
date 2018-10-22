@@ -683,6 +683,7 @@ ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId comm
 
           (*newcomm)->nodeComm = NULL;
           (*newcomm)->netComm  = NULL;
+          (*newcomm)->sharpComm  = NULL;
           if (local_ranks > 1) {
               ncclUniqueId node_comm_uid = (uids + 2 + node_leader_rank*2)[0];
               fprintf(stderr,"NODE: rank %d, host %s, local_rank %d, local_size %d, node_leader %d, uid %" PRIx64 ":%" PRIx64 "\n",
@@ -710,7 +711,34 @@ ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId comm
                       myrank, hostname, netLocalRank, nnodes, ((uint64_t*)&net_comm_uid)[0],
                       ((uint64_t*)&net_comm_uid)[1]);
               NCCLCHECK(ncclCommInitRankSync(&((*newcomm)->netComm), nnodes,
+
                                              net_comm_uid, netLocalRank, false, true ));
+              {
+                  /* Initialize sharp communicator */
+                  struct sharp_coll_context *sharpCtx = NULL;
+                  struct sharp_coll_comm_init_spec comm_spec;
+                  int *gwr = NULL;
+                  comm_spec.rank      = netLocalRank;
+                  comm_spec.size      = nnodes;
+#if SHARP_API > SHARP_VERSION(1,4)
+                  gwr = (int*)malloc(nnodes*sizeof(int));
+                  for (i=0; i<nnodes; i++) {
+                      gwr[i] = i;
+                  }
+                  comm_spec.group_world_ranks = gwr;
+#endif
+                  comm_spec.is_comm_world = 1;
+                  comm_spec.oob_ctx   = (void*)(*newcomm)->net_comm;
+
+                  ret = sharp_coll_comm_init(sharpCtx, &comm_spec,
+                                             (struct sharp_coll_comm **)&newcomm->sharpComm);
+                  if (gwr) free(gwr);
+                  if (ret < 0) {
+                      if (myrank == 0)
+                          fprintf(stderr, "sharp group create failed:%s(%d)\n", sharp_coll_strerror(ret), ret);
+                      return ncclInternalError;
+                  }
+              }
           }
           CUDACHECK(cudaFree(uids));
       }

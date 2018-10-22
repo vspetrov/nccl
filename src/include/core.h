@@ -260,6 +260,7 @@ struct ncclComm {
   void* argsptr;
   struct ncclComm *nodeComm;
   struct ncclComm *netComm;
+  void *sharpComm;
 };
 
 // Check CUDA calls
