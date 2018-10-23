@@ -28,6 +28,7 @@
 #include <string.h>
 #include <errno.h>
 #include <assert.h>
+#include <inttypes.h>
 
 DebugLevel ncclDebugLevel;
 uint64_t ncclDebugMask = INIT; // Default debug sub-system mask is INIT
@@ -50,6 +51,95 @@ NCCL_PARAM(CheckPointers, "CHECK_POINTERS", 0);
 
 extern "C" __attribute__ ((visibility("default")))
 ncclNet_t* ncclNet = NULL;
+
+int oob_barrier(void *ctx) {
+    struct extState *st = (struct extState*)ctx;
+    int nranks = st->nranks;
+    void *tmp = malloc(nranks);
+    bootstrapAllGather(st, tmp, 1);
+    free(tmp);
+    return 0;
+}
+
+int oob_gather(void *ctx, int root, void *sbuf, void *rbuf, int size) {
+    struct extState *st = (struct extState*)ctx;
+    int nranks = st->nranks;
+    void *tmp = malloc(nranks*size);
+    memcpy((void*)((ptrdiff_t)tmp + size*st->rank), sbuf, size);
+    bootstrapAllGather(st, tmp, size);
+    if (st->rank == root) {
+        memcpy(rbuf, tmp, nranks*size);
+    }
+    free(tmp);
+    return 0;
+}
+
+int oob_bcast(void *ctx, void *buf, int size, int root) {
+    struct extState* state = (struct extState*)ctx;
+    void *tmp = malloc(size*state->nranks);
+    if (state->rank == root) {
+        memcpy((void*)((ptrdiff_t)tmp+size*state->rank), buf, size);
+    }
+    bootstrapAllGather(state, tmp, size);
+    if (state->rank != root) {
+        memcpy(buf, (void*)((ptrdiff_t)tmp+size*root), size);
+    }
+    free(tmp);
+    return 0;
+}
+
+// Second version of oob through NCCL itself
+static ncclComm_t sharpBootstrapComm = NULL;
+int oob_barrier_v2(void *ctx) {
+    int nranks = sharpBootstrapComm->nRanks;
+    int myrank = sharpBootstrapComm->rank;
+    cudaStream_t s;
+    char *tmp;
+    CUDACHECK(cudaStreamCreate(&s));
+    CUDACHECK(cudaMalloc(&tmp, nranks));
+    NCCLCHECK(ncclAllGather(&tmp[myrank], tmp, 1, ncclChar, sharpBootstrapComm, s));
+    CUDACHECK(cudaStreamSynchronize(s));
+    CUDACHECK(cudaStreamDestroy(s));
+    CUDACHECK(cudaFree(tmp));
+    return 0;
+}
+
+int oob_gather_v2(void *ctx, int root, void *sbuf, void *rbuf, int size) {
+    int nranks = sharpBootstrapComm->nRanks;
+    int myrank = sharpBootstrapComm->rank;
+    cudaStream_t s;
+    void *tmp_r, *tmp_s;
+    CUDACHECK(cudaStreamCreate(&s));
+    CUDACHECK(cudaMallocManaged(&tmp_r, size*nranks));
+    CUDACHECK(cudaMallocManaged(&tmp_s, size));
+    memcpy(tmp_s, sbuf, size);
+    NCCLCHECK(ncclAllGather(tmp_s, tmp_r, size, ncclChar, sharpBootstrapComm, s));
+    CUDACHECK(cudaStreamSynchronize(s));
+    CUDACHECK(cudaStreamDestroy(s));
+    if (myrank == root) {
+        memcpy(rbuf, tmp_r, size*nranks);
+    }
+    CUDACHECK(cudaFree(tmp_r));
+    CUDACHECK(cudaFree(tmp_s));
+    return 0;
+}
+
+int oob_bcast_v2(void *ctx, void *buf, int size, int root) {
+    int myrank = sharpBootstrapComm->rank;
+    cudaStream_t s;
+    void *tmp;
+    CUDACHECK(cudaStreamCreate(&s));
+    CUDACHECK(cudaMallocManaged(&tmp, size));
+    if (myrank == root) {
+        memcpy(tmp, buf, size);
+    }
+    NCCLCHECK(ncclBroadcast(tmp, tmp, size, ncclChar, root, sharpBootstrapComm, s));
+    CUDACHECK(cudaStreamSynchronize(s));
+    memcpy(buf, tmp, size);
+    CUDACHECK(cudaStreamDestroy(s));
+    CUDACHECK(cudaFree(tmp));
+    return 0;
+}
 
 // We define this as weak to let tests redefine their own
 #pragma weak ncclCudaCompCap
@@ -449,34 +539,34 @@ static ncclResult_t sharpCommAlloc(struct ncclComm* comm, void *commState) {
         nccl_sharp_np = atoi(var);
     }
     int nnodes = comm->nRanks;
+    int myrank = comm->rank;
+    int i;
     if (nccl_sharp_np != -1 && nnodes >= nccl_sharp_np) {
+        fprintf(stderr, "SHARP INIT\n");
         /*Initialize sharp ctx*/
-        char *hostlist = (char*)malloc(max_hostlen*nnodes);
-        //int *ranks_map = (int*)malloc(sizeof(int)*nnodes);
-        int *ranks_map;
-        CUDACHECK(cudaMallocManaged(&ranks_map, sizeof(int)*nnodes));
-        ranks_map[netLocalRank] = myrank;
-        NCCLCHECK(ncclAllGather(&ranks_map[netLocalRank], ranks_map, 1, ncclInt, (*newcomm)->netComm, s));
-        CUDACHECK(cudaStreamSynchronize(s));
-        fprintf(stderr,"RANKS: %d, %d\n", ranks_map[0], ranks_map[1]);
-        hostlist[0]='\0';
-        for (i=0;i<nnodes;i++) {
-            strcat(hostlist,hosts + max_hostlen*ranks_map[i]);
-            if (i < nnodes-1) {
-                strcat(hostlist,",");
+        char *hostlist = (char*)malloc((max_hostlen+1)*nnodes);
+        char *hostnames_allgather_buf = (char*)malloc(max_hostlen*nnodes);
+        memcpy(hostnames_allgather_buf + myrank*max_hostlen, local_hostname, max_hostlen);
+        bootstrapAllGather(commState, hostnames_allgather_buf, max_hostlen);
+        strcpy(hostlist,"");
+        for (i=0; i<nnodes; i++) {
+            strcat(hostlist, hostnames_allgather_buf + i*max_hostlen);
+            if (i < nnodes - 1) {
+                strcat(hostlist, ",");
             }
         }
+        free(hostnames_allgather_buf);
         fprintf(stderr,"HOSTS: %s\n", hostlist);
-        cudaFree(ranks_map);
+
         static struct sharp_coll_context *sharpCtx = NULL;
         struct sharp_coll_init_spec init_spec = {0};
         init_spec.progress_func  = NULL;
         init_spec.job_id = 0xdeadbeef;
         init_spec.hostlist = hostlist;
-        init_spec.world_rank = netLocalRank;
+        init_spec.world_rank = myrank;
         init_spec.world_size = nnodes;;
 #if SHARP_API > SHARP_VERSION(1,4)
-        init_spec.world_local_rank = netLocalRank;
+        init_spec.world_local_rank = myrank;
         init_spec.enable_thread_support = 0;
 #endif
         init_spec.group_channel_idx = 0; //TODO support Yaniv's sharp comm layout
@@ -494,6 +584,7 @@ static ncclResult_t sharpCommAlloc(struct ncclComm* comm, void *commState) {
         } else {
             fprintf(stderr, "SHARP INIT SUCCESS\n");
         }
+
 #if 0
         //TODO need to move it down
         /* Initialize sharp communicator */
@@ -606,6 +697,10 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, ncclUniqueId* comm
   free(rings);
   free(allInfo);
 
+  // if (initSharp) {
+  //     sharpCommAlloc(comm, commState);
+  //     exit(0);
+  // }
   // Intra-process barrier setup
   struct rankInfo {
     uint64_t hostHash;
@@ -679,43 +774,6 @@ cleanup:
   return res;
 }
 
-#include <inttypes.h>
-
-int oob_barrier(void *ctx) {
-    struct extState *st = (struct extState*)ctx;
-    int nranks = st->nranks;
-    void *tmp = malloc(nranks);
-    bootstrapAllGather(st, tmp, 1);
-    free(tmp);
-    return 0;
-}
-
-int oob_gather(void *ctx, int root, void *sbuf, void *rbuf, int size) {
-    struct extState *st = (struct extState*)ctx;
-    int nranks = st->nranks;
-    void *tmp = malloc(nranks*size);
-    memcpy((void*)((ptrdiff_t)tmp + size*st->rank), sbuf, size);
-    bootstrapAllGather(st, tmp, size);
-    if (st->rank == root) {
-        memcpy(rbuf, tmp, nranks*size);
-    }
-    free(tmp);
-    return 0;
-}
-
-int oob_bcast(void *ctx, void *buf, int size, int root) {
-    struct extState* state = (struct extState*)ctx;
-    void *tmp = malloc(size*state->nranks);
-    if (state->rank == root) {
-        memcpy((void*)((ptrdiff_t)tmp+size*state->rank), buf, size);
-    }
-    bootstrapAllGather(state, tmp, size);
-    if (state->rank != root) {
-        memcpy(buf, (void*)((ptrdiff_t)tmp+size*root), size);
-    }
-    free(tmp);
-    return 0;
-}
 
 NCCL_API(ncclResult_t, ncclCommInitRank, ncclComm_t* newcomm, int ndev, ncclUniqueId commId, int myrank);
 ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId commId, int myrank) {
@@ -745,19 +803,24 @@ ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId comm
   } else {
       NCCLCHECK(ncclCommInitRankSync(newcomm, nranks, commId, myrank, false, true));
   }
+  fprintf(stderr,"STARTING CUSTOM\n");
   {
       int nccl_hier_coll_np = -1;
-
+      int nccl_sharp_np = -1;
       char *var;
       var = getenv("NCCL_HIER_COLL_NP");
       if (var) {
           nccl_hier_coll_np = atoi(var);
       }
+      var = getenv("NCCL_SHARP_NP");
+      if (var) {
+          nccl_sharp_np = atoi(var);
+      }
       if (nccl_hier_coll_np != -1 && nranks >= nccl_hier_coll_np) {
-          char *hostname;
-          CUDACHECK(cudaMallocManaged(&hostname, 256));
-          gethostname(hostname, sizeof(hostname));
-          int hostlen = strlen(hostname);
+          char *local_hostname;
+          CUDACHECK(cudaMallocManaged(&local_hostname, 256));
+          gethostname(local_hostname, sizeof(local_hostname));
+          int hostlen = strlen(local_hostname);
           cudaStream_t s;
           int *buf;
           CUDACHECK(cudaMallocManaged(&buf, 2*sizeof(int)));
@@ -769,8 +832,8 @@ ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId comm
 
           char *hosts;
           CUDACHECK(cudaMallocManaged(&hosts, buf[1]*sizeof(char)*nranks));
-          int max_hostlen = buf[1]+1;
-          NCCLCHECK(ncclAllGather(hostname, hosts, max_hostlen, ncclChar, *newcomm, s));
+          int max_hostlen = buf[1] + 1;
+          NCCLCHECK(ncclAllGather(local_hostname, hosts, max_hostlen, ncclChar, *newcomm, s));
           CUDACHECK(cudaStreamSynchronize(s));
           int node_local_rank = -1;
           int local_ranks = 0;
@@ -778,7 +841,7 @@ ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId comm
           int is_single_node = 1;
           for (i=0; i<nranks; i++) {
               char *host = hosts + max_hostlen*i;
-              if (0 == strcmp(hostname, host)) {
+              if (0 == strcmp(local_hostname, host)) {
                   if (node_leader_rank == -1) {
                       node_leader_rank = i;
                   }
@@ -790,8 +853,6 @@ ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId comm
                   is_single_node = 0;
               }
           }
-          // fprintf(stderr, "node_local_rank %d, local_ranks %d, node_leader_rank %d\n",
-          // node_local_rank, local_ranks, node_leader_rank);
 
           if (!is_single_node) {
               ncclUniqueId *uids;
@@ -816,37 +877,72 @@ ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId comm
               if (local_ranks > 1) {
                   ncclUniqueId node_comm_uid = (uids + 2 + node_leader_rank*2)[0];
                   fprintf(stderr,"NODE: rank %d, host %s, local_rank %d, local_size %d, node_leader %d, uid %" PRIx64 ":%" PRIx64 "\n",
-                          myrank, hostname, node_local_rank, local_ranks, node_leader_rank, ((uint64_t*)&node_comm_uid)[0],
+                          myrank, local_hostname, node_local_rank, local_ranks, node_leader_rank, ((uint64_t*)&node_comm_uid)[0],
                           ((uint64_t*)&node_comm_uid)[1]);
                   NCCLCHECK(ncclCommInitRankSync(&((*newcomm)->nodeComm), local_ranks,
-                                                 node_comm_uid, node_local_rank, true, false));
+                                                 node_comm_uid, node_local_rank, false, true));
               }
               int netLocalRank = -1;
-              if (node_leader_rank == myrank) {
-                  ncclUniqueId net_comm_uid = (uids + 2)[1];
-                  int nnodes = 0;
-                  for (i=0; i<nranks; i++) {
-                      if (!memcmp(&(uids+2+2*i)[0],&uids[0],sizeof(ncclUniqueId))) {
+              ncclUniqueId net_comm_uid = (uids + 2)[1];
+              int nnodes = 0;
+              
+
+              for (i=0; i<nranks; i++) {
+                  if (!memcmp(&(uids+2+2*i)[0],&uids[0],sizeof(ncclUniqueId))) {
+                      if (node_leader_rank == myrank) {
                           netLocalRank = nnodes;
                           if (local_ranks == 1) {
                               //TODO release node_comm_uid - no node level was created
                           }
                       }
-                      if (memcmp(&(uids+2+2*i)[0], &commId, sizeof(ncclUniqueId))) {
-                          nnodes++;
-                      }
                   }
+                  if (memcmp(&(uids+2+2*i)[0], &commId, sizeof(ncclUniqueId))) {
+                      nnodes++;
+                  }
+              }
+              if (node_leader_rank == myrank) {
                   fprintf(stderr,"NET: rank %d, host %s, net_rank %d, net_size %d, uid %" PRIx64 ":%" PRIx64 "\n",
-                          myrank, hostname, netLocalRank, nnodes, ((uint64_t*)&net_comm_uid)[0],
+                          myrank, local_hostname, netLocalRank, nnodes, ((uint64_t*)&net_comm_uid)[0],
                           ((uint64_t*)&net_comm_uid)[1]);
                   NCCLCHECK(ncclCommInitRankSync(&((*newcomm)->netComm), nnodes,
-                                                 net_comm_uid, netLocalRank, false, true));
+                                                 net_comm_uid, netLocalRank, true, false));
               }
               CUDACHECK(cudaFree(uids));
+              if (nnodes > nccl_sharp_np) {
+                  sharpBootstrapComm = (*newcomm);
+                  static struct sharp_coll_context *sharpCtx = NULL;
+                  struct sharp_coll_init_spec init_spec = {0};
+                  init_spec.progress_func  = NULL;
+                  init_spec.job_id = 0xdeadbeef;
+                  init_spec.hostlist = NULL;
+                  init_spec.world_rank = myrank;
+                  init_spec.world_size = nranks;;
+#if SHARP_API > SHARP_VERSION(1,4)
+                  init_spec.world_local_rank = node_local_rank;
+                  init_spec.enable_thread_support = 0;
+#endif
+                  init_spec.group_channel_idx = 0; //TODO support Yaniv's sharp comm layout
+                  init_spec.oob_colls.barrier = oob_barrier_v2;
+                  init_spec.oob_colls.bcast = oob_bcast_v2;
+                  init_spec.oob_colls.gather = oob_gather_v2;
+                  init_spec.config = sharp_coll_default_config;
+                  init_spec.config.user_progress_num_polls = 10;
+                  char *dev = getenv("NCCL_SHARP_DEV");
+                  init_spec.config.ib_dev_list = dev ? dev : "mlx5_0:1";
+
+                  if (sharp_coll_init(&init_spec, &sharpCtx) < 0) {
+                      fprintf(stderr, "SHARP COLL INIT ERROR\n");
+                      return ncclInternalError;
+                  } else {
+                      fprintf(stderr, "SHARP INIT SUCCESS, %p\n", sharpCtx);
+                  }
+
+
+              }
           }
+          CUDACHECK(cudaFree(local_hostname));
           CUDACHECK(cudaFree(buf));
           CUDACHECK(cudaFree(hosts));
-          CUDACHECK(cudaFree(hostname));
           CUDACHECK(cudaStreamDestroy(s));
       }
   }
