@@ -39,13 +39,55 @@ ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t count,
             ret = ncclEnqueueCheck(ncclReduceFunc, "Reduce", sendbuff, recvbuff, count, datatype,
                                    op, 0, comm->nodeComm, stream);
         }
-//        cudaStreamSynchronize(stream);
+        cudaStreamSynchronize(stream);
 
         if (comm->netComm) {
             fprintf(stderr,"NET COMM ALLREDUCE\n");
-            ret = ncclEnqueueCheck(ncclAllReduceFunc, "AllReduce", recvbuff, recvbuff, count, datatype,
-                             op, 0, comm->netComm, stream);
-//        cudaStreamSynchronize(stream);
+            if (comm->sharpComm) {
+                struct sharp_coll_reduce_spec reduce_spec;
+                enum sharp_datatype sharp_type;
+                enum sharp_reduce_op op_type;
+                size_t dt_size;
+                sharp_type = SHARP_DTYPE_FLOAT; //TODO map from ncclTYPE
+                op_type = SHARP_OP_SUM; //TODO map from ncclOP
+
+                dt_size = sizeof(float);//SHOULD be dtype dependent
+
+                reduce_spec.sbuf_desc.buffer.ptr = recvbuff;
+
+                void *mr = NULL;
+
+                if (SHARP_COLL_SUCCESS != sharp_coll_reg_mr(comm->sharpCtx, recvbuff, count * dt_size, &mr)) {
+                    fprintf(stderr, "SHARP REG MR FAILED\n");
+                }
+                reduce_spec.sbuf_desc.buffer.length = count * dt_size;
+                reduce_spec.sbuf_desc.buffer.mem_handle = mr;
+                reduce_spec.sbuf_desc.type = SHARP_DATA_BUFFER;
+                reduce_spec.rbuf_desc.buffer.ptr = recvbuff;
+                reduce_spec.rbuf_desc.buffer.length = count * dt_size;
+                reduce_spec.rbuf_desc.buffer.mem_handle = mr;
+                reduce_spec.rbuf_desc.type = SHARP_DATA_BUFFER;
+
+                reduce_spec.sbuf_desc.mem_type = SHARP_MEM_TYPE_CUDA;
+                reduce_spec.rbuf_desc.mem_type = SHARP_MEM_TYPE_CUDA;
+
+                reduce_spec.length = count;
+                reduce_spec.dtype = sharp_type;
+                reduce_spec.op = op_type;
+
+                if (SHARP_COLL_SUCCESS != sharp_coll_do_allreduce(comm->sharpComm, &reduce_spec)) {
+                    fprintf(stderr, "SHARP ALLREDUCE FAILED\n");
+                }
+
+                if (SHARP_COLL_SUCCESS != sharp_coll_dereg_mr(comm->sharpCtx, mr)) {
+                    fprintf(stderr, "SHARP DEREG MR FAILED\n");
+                }
+
+            } else {
+                ret = ncclEnqueueCheck(ncclAllReduceFunc, "AllReduce", recvbuff, recvbuff, count, datatype,
+                                       op, 0, comm->netComm, stream);
+                cudaStreamSynchronize(stream);
+            }
         }
         fprintf(stderr,"NODE COMM BCAST\n");
         if (comm->nodeComm) {

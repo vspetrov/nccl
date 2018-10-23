@@ -886,7 +886,7 @@ ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId comm
               CUDACHECK(cudaFree(uids));
               if (nnodes > nccl_sharp_np) {
                   sharpBootstrapComm = (*newcomm);
-                  static struct sharp_coll_context *sharpCtx = NULL;
+                  struct sharp_coll_context *sharpCtx = NULL;
                   struct sharp_coll_init_spec init_spec = {0};
                   init_spec.progress_func  = NULL;
                   init_spec.job_id = 0xdeadbeef;
@@ -903,6 +903,7 @@ ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId comm
                   init_spec.oob_colls.gather = oob_gather_v2;
                   init_spec.config = sharp_coll_default_config;
                   init_spec.config.user_progress_num_polls = 10;
+
                   char *dev = getenv("NCCL_SHARP_DEV");
                   init_spec.config.ib_dev_list = dev ? dev : "mlx5_0:1";
 

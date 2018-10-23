@@ -263,8 +263,8 @@ struct ncclComm {
   void* argsptr;
   struct ncclComm *nodeComm;
   struct ncclComm *netComm;
-  void *sharpCtx;
-  void *sharpComm;
+  struct sharp_coll_context *sharpCtx;
+  struct sharp_coll_comm *sharpComm;
 };
 
 // Check CUDA calls
