@@ -558,7 +558,7 @@ static ncclResult_t sharpCommAlloc(struct ncclComm* comm, void *commState) {
         free(hostnames_allgather_buf);
         fprintf(stderr,"HOSTS: %s\n", hostlist);
 
-        static struct sharp_coll_context *sharpCtx = NULL;
+        struct sharp_coll_context *sharpCtx = NULL;
         struct sharp_coll_init_spec init_spec = {0};
         init_spec.progress_func  = NULL;
         init_spec.job_id = 0xdeadbeef;
@@ -587,31 +587,6 @@ static ncclResult_t sharpCommAlloc(struct ncclComm* comm, void *commState) {
 
 #if 0
         //TODO need to move it down
-        /* Initialize sharp communicator */
-
-        struct sharp_coll_comm_init_spec comm_spec;
-        uint32_t *gwr = NULL;
-        comm_spec.rank      = netLocalRank;
-        comm_spec.size      = nnodes;
-
-#if SHARP_API > SHARP_VERSION(1,4)
-        gwr = (uint32_t*)malloc(nnodes*sizeof(uint32_t));
-        for (i=0; i<nnodes; i++) {
-            gwr[i] = i;
-        }
-        comm_spec.group_world_ranks = gwr;
-#endif
-        comm_spec.is_comm_world = 1;
-        comm_spec.oob_ctx   = (void*)(*newcomm)->netComm;
-
-        int ret = sharp_coll_comm_init(sharpCtx, &comm_spec,
-                                       (struct sharp_coll_comm **)&(*newcomm)->sharpComm);
-        if (gwr) free(gwr);
-        if (ret < 0) {
-            if (myrank == 0)
-                fprintf(stderr, "sharp group create failed:%s(%d)\n", sharp_coll_strerror(ret), ret);
-            return ncclInternalError;
-        }
 #endif
     }
     return ncclSuccess;
@@ -816,6 +791,11 @@ ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId comm
       if (var) {
           nccl_sharp_np = atoi(var);
       }
+      (*newcomm)->nodeComm = NULL;
+      (*newcomm)->netComm  = NULL;
+      (*newcomm)->sharpComm  = NULL;
+      (*newcomm)->sharpCtx = NULL;
+      
       if (nccl_hier_coll_np != -1 && nranks >= nccl_hier_coll_np) {
           char *local_hostname;
           CUDACHECK(cudaMallocManaged(&local_hostname, 256));
@@ -870,10 +850,6 @@ ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId comm
               NCCLCHECK(ncclAllGather(uids, uids+2, 2*sizeof(ncclUniqueId), ncclChar,
                                       *newcomm, s));
               CUDACHECK(cudaStreamSynchronize(s));
-
-              (*newcomm)->nodeComm = NULL;
-              (*newcomm)->netComm  = NULL;
-              (*newcomm)->sharpComm  = NULL;
               if (local_ranks > 1) {
                   ncclUniqueId node_comm_uid = (uids + 2 + node_leader_rank*2)[0];
                   fprintf(stderr,"NODE: rank %d, host %s, local_rank %d, local_size %d, node_leader %d, uid %" PRIx64 ":%" PRIx64 "\n",
@@ -936,7 +912,38 @@ ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId comm
                   } else {
                       fprintf(stderr, "SHARP INIT SUCCESS, %p\n", sharpCtx);
                   }
+                  (*newcomm)->sharpCtx = sharpCtx;
 
+                  if (node_local_rank == 0) {
+                      fprintf(stderr,"CREATING SHARP COMM\n");
+                      /* Initialize sharp communicator */
+                      struct sharp_coll_comm_init_spec comm_spec;
+                      uint32_t *gwr = NULL;
+                      comm_spec.rank      = netLocalRank;
+                      comm_spec.size      = nnodes;
+#if SHARP_API > SHARP_VERSION(1,4)
+                      gwr = (uint32_t*)malloc(nnodes*sizeof(uint32_t));
+                      for (i=0; i<nnodes; i++) {
+                          gwr[i] = myrank;
+                      }
+                      comm_spec.group_world_ranks = gwr;
+#endif
+                      comm_spec.is_comm_world = 0;
+                      comm_spec.oob_ctx   = NULL;
+                      assert((*newcomm)->netComm);
+                      sharpBootstrapComm = (*newcomm)->netComm;
+                      int ret = sharp_coll_comm_init(sharpCtx, &comm_spec,
+                                                     (struct sharp_coll_comm **)&(*newcomm)->sharpComm);
+                      if (gwr) free(gwr);
+                      if (ret < 0) {
+                          if (myrank == 0)
+                              fprintf(stderr, "sharp group create failed:%s(%d)\n", sharp_coll_strerror(ret), ret);
+                          return ncclInternalError;
+                      } else {
+                          fprintf(stderr, "SHARP GROUP CREATE SUCCESS, %p\n", (*newcomm)->sharpComm);
+                      }
+                      
+                  }
 
               }
           }

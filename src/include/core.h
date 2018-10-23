@@ -263,6 +263,7 @@ struct ncclComm {
   void* argsptr;
   struct ncclComm *nodeComm;
   struct ncclComm *netComm;
+  void *sharpCtx;
   void *sharpComm;
 };
 
