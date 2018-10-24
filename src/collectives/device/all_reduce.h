@@ -21,7 +21,7 @@ __device__ void ncclSharpAllReduceKernel(struct CollectiveArgs* args) {
   const int nthreads = blockDim.x - 1;
   const int bid = args->bid;
   __shared__ T* sharedNextOutput;
-  struct ncclComm* comm = args->comm->netComm;
+  struct ncclComm* comm = args->comm->nodeComm;
   struct ncclRing* ring = comm->rings+blockIdx.x;
   int prevdirect = ring->recv.conn.direct;
   int nextdirect = ring->send.conn.direct;
@@ -31,8 +31,10 @@ __device__ void ncclSharpAllReduceKernel(struct CollectiveArgs* args) {
   PostFlag postDoneToPrev(ring->recv.conn.head, ALLREDUCE_SUBSTEPS, NULL, 0);
   PostFlag postReadyToNext(ring->send.conn.tail, 0, ring->send.conn.fifo, ALLREDUCE_BUFCHUNKS*ALLREDUCE_SUBSTEPS);
 
-  WaitFlag waitSharp(ring->sharp.tail, 1);
-  PostFlag postSharp(ring->sharp.head, 1, ring->sharp.fifo, ALLREDUCE_SUBSTEPS);
+  struct ncclRing* netRing = args->comm->netComm->rings+blockIdx.x;
+
+  WaitFlag waitSharp(netRing->sharp.conn.tail, 1);
+  PostFlag postSharp(netRing->sharp.conn.head, 1, netRing->sharp.conn.fifo, ALLREDUCE_SUBSTEPS);
 
   typedef Primitives<UNROLL, ALLREDUCE_SUBSTEPS, T, FUNC> Prims;
 

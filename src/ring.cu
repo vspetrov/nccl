@@ -40,6 +40,13 @@ ncclResult_t initRing(struct ncclComm* comm, int ringid) {
   ring->send.conn.llStep = 0;
   ring->send.conn.llLastCleaning = 0;
 
+  ring->sharp.conn.head = &sendMem->head;
+  ring->sharp.conn.llHead = &sendMem->llHead;
+  ring->sharp.conn.direct = 0;
+  ring->sharp.conn.llStep = 0;
+  ring->sharp.conn.llLastCleaning = 0;
+
+
   // Ring index to user rank table.
   NCCLCHECK(ncclCudaCalloc(&ring->devUserRanks, comm->nRanks));
   NCCLCHECK(ncclCalloc(&ring->userRanks, comm->nRanks));
