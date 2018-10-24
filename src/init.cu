@@ -724,9 +724,9 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, ncclUniqueId* comm
           init_spec.job_id = 0xdeadbeef;
           init_spec.hostlist = NULL;
           init_spec.world_rank = rank;
-          init_spec.world_size = nranks;;
+          init_spec.world_size = nranks;
 #if SHARP_API > SHARP_VERSION(1,4)
-          init_spec.world_local_rank = comm->intraRank;
+          init_spec.world_local_rank = comm->nodeRank;
           init_spec.enable_thread_support = 0;
 #endif
           init_spec.group_channel_idx = 0; //TODO support Yaniv's sharp comm layout
