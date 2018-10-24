@@ -344,6 +344,7 @@ static ncclResult_t setupRing(struct ncclComm* comm, int ringid, int rank, int n
   NCCLCHECK(selectTransport<1>(allInfo+rank, allInfo+next, connect+1, &ring->send.transport, ring));
   NCCLCHECK(transportCreateProxy(0, ring, comm));
   NCCLCHECK(transportCreateProxy(1, ring, comm));
+  NCCLCHECK(transportCreateProxy(2, ring, comm));
   return ncclSuccess;
 }
 
@@ -650,6 +651,10 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, ncclUniqueId* comm
   free(rings);
   free(allInfo);
 
+  // if (initSharp) {
+  //     sharpCommAlloc(comm, commState);
+  //     exit(0);
+  // }
   // Intra-process barrier setup
   struct rankInfo {
     uint64_t hostHash;
@@ -818,6 +823,7 @@ ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId comm
   } else {
       NCCLCHECK(ncclCommInitRankSync(newcomm, nranks, commId, myrank, NCCL_COMM_INIT_MAIN, NULL));
   }
+  fprintf(stderr,"STARTING CUSTOM\n");
   {
       (*newcomm)->nodeComm = NULL;
       (*newcomm)->netComm  = NULL;

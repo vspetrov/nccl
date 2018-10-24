@@ -75,6 +75,7 @@ static void StopProxy(struct transportProxyInfo* info) {
 
 #define RECV 0
 #define SEND 1
+#define SHARP 2
 
 static bool NeedProxy(int type, int pattern, struct ncclRing* ring, int nranks) {
   enum proxyMode mode = proxyPatternMode(pattern);
@@ -155,9 +156,87 @@ void* persistentThread(void *opaqueInfo) {
   }
 }
 
+void* sharpPersistentThread(void *opaqueInfo) {
+  struct transportProxyInfo* info = (struct transportProxyInfo*)opaqueInfo;
+  // We need to initialize the context before launching any NCCL cuda kernel,
+  // otherwise we would create it during the first cudaMemcpyAsync inside the
+  // proxy function and that would cause a deadlock
+  cudaSetDevice(info->comm->cudaDev);
+  // Signal the main thread the context is created and it can proceed.
+  SetProxyReady(info);
+  while (1) {
+    struct ncclProxyArgs args;
+    FifoPullArgs(info, &args);
+    if (args.active == -1) {
+      // Main thread asked to stop
+      return NULL;
+    }
+    ncclResult_t res = info->func(&args);
+    if (res != ncclSuccess) {
+      WARN("%s:%d -> %d [Proxy thread error]", __FILE__, __LINE__, res);
+    }
+  }
+}
+
+
+ncclResult_t doSharp (struct ncclProxyArgs* args){
+  fprintf(stderr,"waaaaaa\n");
+  return ncclSuccess;
+  
+}
+
+struct netSendResources {
+  void* netSendComm;
+  struct ncclSendMem* hostSendMem;
+  struct ncclRecvMem* hostRecvMem;
+  struct ncclSendMem* devHostSendMem;
+  struct ncclRecvMem* devHostRecvMem;
+  struct ncclSendMem* hostDevMem;
+  int netDev;
+  bool cudaSupport;
+  struct ncclRecvMem* devNetMem;
+  uint64_t llStep;
+  uint64_t llLastCleaning;
+};
+
+ncclResult_t netSharpProxy(struct ncclProxyArgs* args) {
+  struct ncclRing* ring = args->ring;
+  struct netSendResources* resources = (struct netSendResources*) (ring->send.transportResources);
+  const int llMode = args->llMode;
+
+  volatile uint64_t* prevTail = &resources->hostRecvMem->tail;
+  struct ncclSendMem* prevMem = resources->hostDevMem ? resources->hostDevMem : resources->hostSendMem;
+  uint64_t* prevHead = llMode ? &prevMem->llHead : &prevMem->head;
+  struct ncclRecvMem* localMem = resources->cudaSupport ? resources->devNetMem : resources->hostRecvMem;
+  char* localBuff = llMode ? resources->hostRecvMem->llBuff : localMem->buff;
+  volatile int* sizesFifo = llMode ? resources->hostRecvMem->llSizesFifo : resources->hostRecvMem->sizesFifo;
+  int buffSize = llMode ? NCCL_LL_BUFF_SIZE : ring->buffSize;
+  int sliceSize = buffSize / args->substeps;
+
+  return ncclSuccess;
+
+}
+
 ncclResult_t transportCreateProxy(int type, struct ncclRing* ring, struct ncclComm* comm) {
-  struct ncclConnector* connector = (type == RECV) ? &ring->recv : &ring->send;
-  threadFunc_t proxyfunc = (threadFunc_t) ((type == RECV) ? connector->transport->recv.proxy : connector->transport->send.proxy);
+  struct ncclConnector* connector;
+  threadFunc_t proxyfunc;
+  switch(type){
+   case(SEND):
+    connector = &ring->send;
+    proxyfunc = (threadFunc_t) connector->transport->send.proxy;
+    break; 
+   case(RECV):
+    connector = &ring->recv;
+    proxyfunc = (threadFunc_t) connector->transport->recv.proxy;
+    break;
+   case(SHARP):
+    connector = &ring->sharp;
+    proxyfunc = (threadFunc_t) &doSharp;
+    break;
+   default:
+    return ncclInvalidArgument;
+  }
+
   if (proxyfunc) {
     TRACE(NET,"type %d ring %p proxyfunc %p comm %p", type, ring, proxyfunc, comm);
     struct transportProxyInfo* info;
