@@ -271,6 +271,8 @@ struct ncclComm {
   int nodeSize;
   int netRank;
   int netSize;
+  int netLeaderRank;
+  int nodeLeaderRank;
   struct ncclComm *nodeComm;
   struct ncclComm *netComm;
   struct sharp_coll_context *sharpCtx;
