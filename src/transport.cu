@@ -156,28 +156,11 @@ void* persistentThread(void *opaqueInfo) {
   }
 }
 
-void* sharpPersistentThread(void *opaqueInfo) {
-  struct transportProxyInfo* info = (struct transportProxyInfo*)opaqueInfo;
-  // We need to initialize the context before launching any NCCL cuda kernel,
-  // otherwise we would create it during the first cudaMemcpyAsync inside the
-  // proxy function and that would cause a deadlock
-  cudaSetDevice(info->comm->cudaDev);
-  // Signal the main thread the context is created and it can proceed.
-  SetProxyReady(info);
-  while (1) {
-    struct ncclProxyArgs args;
-    FifoPullArgs(info, &args);
-    if (args.active == -1) {
-      // Main thread asked to stop
-      return NULL;
-    }
-    ncclResult_t res = info->func(&args);
-    if (res != ncclSuccess) {
-      WARN("%s:%d -> %d [Proxy thread error]", __FILE__, __LINE__, res);
-    }
-  }
-}
 
+ncclResult_t setupSharp(){
+
+
+}
 
 ncclResult_t doSharp (struct ncclProxyArgs* args){
   fprintf(stderr,"waaaaaa\n");
