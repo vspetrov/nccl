@@ -845,7 +845,6 @@ ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId comm
           // fprintf(stderr, "NET UID RST: %" PRIx64 ":%" PRIx64 "\n", ((uint64_t*)&netUid)[0], ((uint64_t*)&netUid)[1]);
           // fprintf(stderr, "NODE UID RST: %" PRIx64 ":%" PRIx64 "\n", ((uint64_t*)&nodeUid)[0], ((uint64_t*)&nodeUid)[1]);
           NCCLCHECK(ncclCommInitRankSync(&main_comm->nodeComm, main_comm->nodeSize, nodeUid, main_comm->nodeRank, NCCL_COMM_INIT_NODE, main_comm));
-          if (myrank >= 2) sleep(3);
           NCCLCHECK(ncclCommInitRankSync(&main_comm->netComm,  main_comm->netSize,  netUid,  main_comm->netRank,  NCCL_COMM_INIT_NET, main_comm));
           // fprintf(stderr, "NODE COMM %p, NET_COMM %p\n", main_comm->nodeComm, main_comm->netComm);
       }
