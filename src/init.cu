@@ -545,7 +545,7 @@ int unique (uint64_t* first, uint64_t* last) {
     return (++result - begin);
 }
 
-static ncclResult_t initTransportsRank(struct ncclComm* comm, ncclUniqueId* commId, int flags) {
+static ncclResult_t initTransportsRank(struct ncclComm* comm, ncclUniqueId* commId, int flags, ncclComm_t main_comm) {
   int rank = comm->rank;
   int nranks = comm->nRanks;
   void* commState;
@@ -609,7 +609,6 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, ncclUniqueId* comm
   NCCLCHECK(buildRings(nrings, rings, rank, nranks, prev, next));
   free(prev);
   free(next);
-  static struct sharp_coll_context *sharpCtx = NULL;
 
   // Connect with prev/next for each ring
   if (flags == NCCL_COMM_INIT_NET) {
@@ -619,18 +618,24 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, ncclUniqueId* comm
       struct sharp_coll_comm_init_spec comm_spec;
       comm_spec.rank      = rank;
       comm_spec.size      = nranks;
+      uint32_t *gwr = NULL;
 #if SHARP_API > SHARP_VERSION(1,4)
-      comm_spec.group_world_ranks = NULL;
+      gwr = (uint32_t*)malloc(nranks*sizeof(uint32_t));
+      gwr[rank] = main_comm->rank;
+      NCCLCHECK(bootstrapAllGather(commState, gwr, sizeof(uint32_t)));
+      comm_spec.group_world_ranks = gwr;
 #endif
       comm_spec.is_comm_world = 0;
       comm_spec.oob_ctx   = commState;
-      int ret = sharp_coll_comm_init(sharpCtx, &comm_spec, (struct sharp_coll_comm **)&comm->sharpComm);
+      int ret = sharp_coll_comm_init(main_comm->sharpCtx, &comm_spec, (struct sharp_coll_comm **)&comm->sharpComm);
+      if (gwr) free(gwr);
       if (ret < 0) {
           fprintf(stderr, "sharp group create failed:%s(%d)\n", sharp_coll_strerror(ret), ret);
           return ncclInternalError;
       } else {
           fprintf(stderr, "SHARP GROUP CREATE SUCCESS, %p\n", comm->sharpComm);
       }
+
   }
 
   for (int r=0; r<nrings; r++) {
@@ -734,13 +739,12 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, ncclUniqueId* comm
           char *dev = getenv("NCCL_SHARP_DEV");
           init_spec.config.ib_dev_list = dev ? dev : "mlx5_0:1";
 
-          if (sharp_coll_init(&init_spec, &sharpCtx) < 0) {
+          if (sharp_coll_init(&init_spec, &comm->sharpCtx) < 0) {
               fprintf(stderr, "SHARP COLL INIT ERROR\n");
               return ncclInternalError;
           } else {
-              fprintf(stderr, "SHARP INIT SUCCESS, %p\n", sharpCtx);
+              fprintf(stderr, "SHARP INIT SUCCESS, %p\n", comm->sharpCtx);
           }
-          comm->sharpCtx = sharpCtx;
       }
       free(hosts);
       // fprintf(stderr, "rank %d, intraRank %d, intraRanks %d, netRank %d, nnodes %d, nodeLeaderRank %d, netLeaderRank %d\n", rank,
@@ -761,7 +765,7 @@ bool SetCpuAffinity(int cudaDev, nvmlDevice_t* nvmlDevice) {
   }
   return true;
 }
-ncclResult_t ncclCommInitRankSync(ncclComm_t* newcomm, int ndev, ncclUniqueId commId, int myrank, int flag ) {
+ncclResult_t ncclCommInitRankSync(ncclComm_t* newcomm, int ndev, ncclUniqueId commId, int myrank, int flag, ncclComm_t main_comm) {
   cpu_set_t affinitySave;
   sched_getaffinity(0, sizeof(cpu_set_t), &affinitySave);
   NCCLCHECK(wrapNvmlSymbols());
@@ -773,7 +777,7 @@ ncclResult_t ncclCommInitRankSync(ncclComm_t* newcomm, int ndev, ncclUniqueId co
   SetCpuAffinity(cudaDev, &nvmlDevice);
   ncclResult_t res;
   NCCLCHECKGOTO(commAlloc(newcomm, ndev, myrank), res, cleanup);
-  NCCLCHECKGOTO(initTransportsRank(*newcomm, &commId , flag ), res, cleanup);
+  NCCLCHECKGOTO(initTransportsRank(*newcomm, &commId , flag, main_comm), res, cleanup);
   NCCLCHECKGOTO(devCommSetup(*newcomm), res, cleanup);
 
   sched_setaffinity(0, sizeof(cpu_set_t), &affinitySave);
@@ -810,9 +814,9 @@ ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId comm
   if (ncclAsyncMode()) {
     int cudaDev;
     CUDACHECK(cudaGetDevice(&cudaDev));
-    return ncclAsyncInit(ncclCommInitRankSync, cudaDev, newcomm, nranks, commId, myrank, NCCL_COMM_INIT_MAIN);
+    return ncclAsyncInit(ncclCommInitRankSync, cudaDev, newcomm, nranks, commId, myrank, NCCL_COMM_INIT_MAIN, NULL);
   } else {
-      NCCLCHECK(ncclCommInitRankSync(newcomm, nranks, commId, myrank, NCCL_COMM_INIT_MAIN));
+      NCCLCHECK(ncclCommInitRankSync(newcomm, nranks, commId, myrank, NCCL_COMM_INIT_MAIN, NULL));
   }
   {
       (*newcomm)->nodeComm = NULL;
@@ -840,9 +844,9 @@ ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId comm
           ncclUniqueId  netUid = (uids + 2 + 2*main_comm->netLeaderRank)[1];
           // fprintf(stderr, "NET UID RST: %" PRIx64 ":%" PRIx64 "\n", ((uint64_t*)&netUid)[0], ((uint64_t*)&netUid)[1]);
           // fprintf(stderr, "NODE UID RST: %" PRIx64 ":%" PRIx64 "\n", ((uint64_t*)&nodeUid)[0], ((uint64_t*)&nodeUid)[1]);
-          NCCLCHECK(ncclCommInitRankSync(&main_comm->nodeComm, main_comm->nodeSize, nodeUid, main_comm->nodeRank, NCCL_COMM_INIT_NODE));
-          if (myrank >= 2) sleep(10);
-          NCCLCHECK(ncclCommInitRankSync(&main_comm->netComm,  main_comm->netSize,  netUid,  main_comm->netRank,  NCCL_COMM_INIT_NET));
+          NCCLCHECK(ncclCommInitRankSync(&main_comm->nodeComm, main_comm->nodeSize, nodeUid, main_comm->nodeRank, NCCL_COMM_INIT_NODE, main_comm));
+          if (myrank >= 2) sleep(3);
+          NCCLCHECK(ncclCommInitRankSync(&main_comm->netComm,  main_comm->netSize,  netUid,  main_comm->netRank,  NCCL_COMM_INIT_NET, main_comm));
           // fprintf(stderr, "NODE COMM %p, NET_COMM %p\n", main_comm->nodeComm, main_comm->netComm);
       }
   }
