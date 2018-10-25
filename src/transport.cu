@@ -121,7 +121,6 @@ ncclResult_t transportSaveProxies(int substeps, int subchunks, int nstepsPerRoun
   int nsteps = nstepsPerRound * nrounds * substeps;
   TRACE(NET,"opCount %lx substeps %d subchunks %d nrounds %d nsteps %d comm %p", comm->opCount, subchunks, subchunks, nrounds, nsteps, comm);
   TRACE(NET,"opCount %lx nbytes %zi nrings %d buffSize %d pattern %d comm %p", comm->opCount, nbytes, nrings, buffSize, pattern, comm);
-  printf("NRINGS %d\n", nrings);
   for (int r=0; r<nrings; r++) {
     struct ncclRing* ring = comm->rings+((comm->myParams->gridDim.x+r)%comm->nRings);
     struct ncclProxyArgs args = { ring, substeps*subchunks, nsteps, comm->opCount, llMode, 0 };
@@ -199,7 +198,6 @@ ncclResult_t sharpProxy(struct ncclProxyArgs* args) {
   const int llMode = args->llMode;
 
   volatile uint64_t* prevTail = &resources->hostRecvMem->tail;
-  volatile uint64_t* prevTail2 = &resources->hostSendMem->tail;
 
   struct ncclSendMem* prevMem = resources->hostDevMem ? resources->hostDevMem : resources->hostSendMem;
   volatile uint64_t* prevHead = llMode ? &prevMem->llHead : &prevMem->head;
@@ -214,12 +212,7 @@ ncclResult_t sharpProxy(struct ncclProxyArgs* args) {
     ++(*prevTail);
   }
 
-  while (*prevHead > *prevTail2){
-    printf("Gap2! sizesFifo = %d\n", sizesFifo[0]);
-    ++(*prevTail2);
-  }
-
-
+  fprintf(stderr, " SHARP PROXY \n");
   return ncclSuccess;
 }
 

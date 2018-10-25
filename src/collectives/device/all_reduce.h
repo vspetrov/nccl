@@ -36,9 +36,6 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
   WaitFlag waitSharp(netRing->sharp.conn.tail, 0);
 
   PostFlag postSharp(netRing->sharp.conn.head, 0, netRing->sharp.conn.fifo, ALLREDUCE_SUBSTEPS);
-  if (0 == tid) printf("line %d head %llx, tail %llx \n", __LINE__,
-                       *netRing->sharp.conn.head, *netRing->sharp.conn.tail);
-
   typedef Primitives<UNROLL, ALLREDUCE_SUBSTEPS, T, FUNC> Prims;
 
   const ssize_t size = args->N;
@@ -135,19 +132,20 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
 
     __syncthreads();
 
-  if (0 == tid) printf("line %d head %llx, tail %llx \n", __LINE__,
+  if (nthreads == tid) printf("line %d head %llx, tail %llx \n", __LINE__,
                        *netRing->sharp.conn.head, *netRing->sharp.conn.tail);
-    postSharp.postSize(0,sliceSize);
-  if (0 == tid) printf("line %d head %llx, tail %llx \n", __LINE__,
+  if (nthreads == tid)  postSharp.postSize(0,sliceSize);
+  if (nthreads == tid) printf("line %d head %llx, tail %llx \n", __LINE__,
                        *netRing->sharp.conn.head, *netRing->sharp.conn.tail);
     
     __threadfence_system();
-    postSharp.post(1);
-  if (0 == tid) printf("line %d head %llx, tail %llx \n", __LINE__,
+    if (nthreads == tid)  postSharp.post(1);
+  if (nthreads == tid) printf("line %d head %llx, tail %llx \n", __LINE__,
                        *netRing->sharp.conn.head, *netRing->sharp.conn.tail);
    __syncthreads();
-    waitSharp.wait(1);
-  if (0 == tid) printf("line %d head %llx, tail %llx \n", __LINE__,
+   if (0 == tid) waitSharp.wait(1);
+   __syncthreads();
+  if (nthreads == tid) printf("line %d head %llx, tail %llx \n", __LINE__,
                        *netRing->sharp.conn.head, *netRing->sharp.conn.tail);
 
    __syncthreads();
@@ -229,8 +227,6 @@ __device__ void nccl__AllReduceKernel(struct CollectiveArgs* args) {
   const int bid = args->bid;
   __shared__ T* sharedNextOutput;
   struct ncclComm* comm = args->comm->nodeComm;
-  printf("%s:%d, comm %p, rings comm->rings %p\n",
-         __FUNCTION__, __LINE__, comm, comm->rings);
   struct ncclRing* ring = comm->rings+blockIdx.x;
   int prevdirect = ring->recv.conn.direct;
   int nextdirect = ring->send.conn.direct;
@@ -427,7 +423,6 @@ __device__ void ncclAllReduceLLKernel(struct CollectiveArgs* args) {
   volatile int * sizesFifo = ring->send.conn.llFifo;
   uint64_t sendHead = sendHeadPtr[0];
 
-  printf("%s:%d\n", __FUNCTION__, __LINE__);
   typedef LLPrimitives<T, FUNC> LL;
 
   const ssize_t size = args->N;
