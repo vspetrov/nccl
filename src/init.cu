@@ -662,6 +662,7 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, ncclUniqueId* comm
     NCCLCHECK(bootstrapRingExchange(commState, connect, ring->userRanks[nranks-1], ring->userRanks[1], sizeof(struct ncclConnect)));
     NCCLCHECK(ring->send.transport->send.connect(connect+1, &ring->send));
     NCCLCHECK(ring->recv.transport->recv.connect(connect+0, &ring->recv));
+    NCCLCHECK(sharpConnect(connect+2, &ring->sharp)); 
   }
   free(rings);
   free(allInfo);

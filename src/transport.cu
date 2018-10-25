@@ -216,6 +216,32 @@ ncclResult_t netSharpProxy(struct ncclProxyArgs* args) {
 
 }
 
+ncclResult_t sharpConnect(struct ncclConnect* connectInfo, struct ncclConnector* send) {
+  // Setup device pointers
+  struct netSendResources* resources = (struct netSendResources*)send->transportResources;
+
+  if (resources->cudaSupport) {
+    send->conn.buff = resources->devNetMem->buff;
+    // We don't use devMem for llMode because the CPU has to read the data
+    send->conn.llBuff = resources->devHostRecvMem->llBuff;
+  } else {
+    send->conn.buff = resources->devHostRecvMem->buff;
+    send->conn.llBuff = resources->devHostRecvMem->llBuff;
+  }
+  send->conn.tail = &resources->devHostRecvMem->tail;
+  send->conn.opCount = &resources->devHostRecvMem->opCount;
+  send->conn.fifo = resources->devHostRecvMem->sizesFifo;
+  send->conn.llFifo = resources->devHostRecvMem->llSizesFifo;
+
+  if (resources->hostDevMem == NULL) {
+    send->conn.head = &resources->devHostSendMem->head;
+    send->conn.llHead = &resources->devHostSendMem->llHead;
+  }
+
+  //Sharp comm init should be here.
+  return ncclSuccess;
+}
+
 ncclResult_t transportCreateProxy(int type, struct ncclRing* ring, struct ncclComm* comm) {
   struct ncclConnector* connector;
   threadFunc_t proxyfunc;

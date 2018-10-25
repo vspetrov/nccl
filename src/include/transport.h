@@ -96,6 +96,9 @@ static inline int proxyPatternRoot(int pattern) { return (pattern > 0) ? pattern
 ncclResult_t transportSaveProxies(int substeps, int subchunks, int nstepsPerRound, int nblocksPerRound, size_t size, int pattern, struct ncclComm* comm);
 ncclResult_t transportStartProxies(struct ncclComm* comm);
 
+
+ncclResult_t sharpConnect(struct ncclConnect* connectInfo, struct ncclConnector* send);
+
 #include <unistd.h>
 
 // Spin wait until func evaluates to true
