@@ -318,7 +318,11 @@ static ncclResult_t selectTransport(struct ncclInfo* myInfo, struct ncclInfo* pe
       transportComm = &transport->send;
       break;
      case(2):
+      t=2;
       transportComm = &transport->send;
+      NCCLCHECK(transportComm->setup(myInfo->tinfo+t, peerInfo->tinfo+t, connect, ring));
+      *transportRet = transport;
+      return ncclSuccess;
       break;
      default:
       return ncclInternalError;
@@ -355,7 +359,7 @@ static ncclResult_t setupRing(struct ncclComm* comm, int ringid, int rank, int n
 
   NCCLCHECK(selectTransport<0>(allInfo+rank, allInfo+prev, connect+0, &ring->recv.transport, ring));
   NCCLCHECK(selectTransport<1>(allInfo+rank, allInfo+next, connect+1, &ring->send.transport, ring));
-  NCCLCHECK(selectTransport<2>(allInfo+rank, allInfo+next, connect+1, &ring->send.transport, ring));
+  NCCLCHECK(selectTransport<2>(allInfo+rank, allInfo+rank, connect+2, &ring->sharp.transport, ring));
 
   NCCLCHECK(transportCreateProxy(0, ring, comm));
   NCCLCHECK(transportCreateProxy(1, ring, comm));
