@@ -193,28 +193,31 @@ struct netSendResources {
   uint64_t llLastCleaning;
 };
 
-ncclResult_t netSharpProxy(struct ncclProxyArgs* args) {
+ncclResult_t sharpProxy(struct ncclProxyArgs* args) {
   struct ncclRing* ring = args->ring;
   struct netSendResources* resources = (struct netSendResources*) (ring->send.transportResources);
   const int llMode = args->llMode;
 
   volatile uint64_t* prevTail = &resources->hostRecvMem->tail;
   struct ncclSendMem* prevMem = resources->hostDevMem ? resources->hostDevMem : resources->hostSendMem;
-  uint64_t* prevHead = llMode ? &prevMem->llHead : &prevMem->head;
+  volatile uint64_t* prevHead = llMode ? &prevMem->llHead : &prevMem->head;
   struct ncclRecvMem* localMem = resources->cudaSupport ? resources->devNetMem : resources->hostRecvMem;
   char* localBuff = llMode ? resources->hostRecvMem->llBuff : localMem->buff;
   volatile int* sizesFifo = llMode ? resources->hostRecvMem->llSizesFifo : resources->hostRecvMem->sizesFifo;
   int buffSize = llMode ? NCCL_LL_BUFF_SIZE : ring->buffSize;
   int sliceSize = buffSize / args->substeps;
 
+  while (*prevHead > *prevTail){
+    printf("Gap! sizesFifo = %d\n", sizesFifo[0]);
+    ++(*prevTail);
+  }
   return ncclSuccess;
-
 }
 
 ncclResult_t sharpSetup(ncclTinfo_t* myOpaqueInfo, ncclTinfo_t* peerOpaqueInfo, struct ncclConnect* connectInfo, struct ncclRing* ring) {
   struct netSendResources* resources;
   NCCLCHECK(ncclCalloc(&resources, 1));
-  ring->send.transportResources = resources;
+  ring->sharp.transportResources = resources;
 
   struct netInfo* myInfo = (struct netInfo*)myOpaqueInfo;
   resources->cudaSupport = false;
@@ -278,7 +281,7 @@ ncclResult_t transportCreateProxy(int type, struct ncclRing* ring, struct ncclCo
     break;
    case(SHARP):
     connector = &ring->sharp;
-    proxyfunc = (threadFunc_t) &doSharp;
+    proxyfunc = (threadFunc_t) &sharpProxy;
     break;
    default:
     return ncclInvalidArgument;
