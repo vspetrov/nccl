@@ -33,9 +33,11 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
 
   struct ncclRing* netRing = comm->rings+blockIdx.x;
 
-  WaitFlag waitSharp(netRing->sharp.conn.tail, 1);
+  WaitFlag waitSharp(netRing->sharp.conn.tail, 0);
 
-  PostFlag postSharp(netRing->sharp.conn.head, 1, netRing->sharp.conn.fifo, ALLREDUCE_SUBSTEPS);
+  PostFlag postSharp(netRing->sharp.conn.head, 0, netRing->sharp.conn.fifo, ALLREDUCE_SUBSTEPS);
+  if (0 == tid) printf("line %d head %llx, tail %llx \n", __LINE__,
+                       *netRing->sharp.conn.head, *netRing->sharp.conn.tail);
 
   typedef Primitives<UNROLL, ALLREDUCE_SUBSTEPS, T, FUNC> Prims;
 
@@ -133,12 +135,20 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
 
     __syncthreads();
 
+  if (0 == tid) printf("line %d head %llx, tail %llx \n", __LINE__,
+                       *netRing->sharp.conn.head, *netRing->sharp.conn.tail);
     postSharp.postSize(0,sliceSize);
-
+  if (0 == tid) printf("line %d head %llx, tail %llx \n", __LINE__,
+                       *netRing->sharp.conn.head, *netRing->sharp.conn.tail);
+    
     __threadfence_system();
     postSharp.post(1);
+  if (0 == tid) printf("line %d head %llx, tail %llx \n", __LINE__,
+                       *netRing->sharp.conn.head, *netRing->sharp.conn.tail);
    __syncthreads();
-    waitSharp.wait(0);
+    waitSharp.wait(1);
+  if (0 == tid) printf("line %d head %llx, tail %llx \n", __LINE__,
+                       *netRing->sharp.conn.head, *netRing->sharp.conn.tail);
 
    __syncthreads();
     // k-2 steps: copy to next GPU
@@ -209,7 +219,6 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
     __threadfence_system();
     *ring->recv.conn.opCount = args->opCount+1;
   }
-   printf("%s:%d\n", __FUNCTION__, __LINE__);
 }
 
 
