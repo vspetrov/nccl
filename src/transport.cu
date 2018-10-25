@@ -213,7 +213,7 @@ ncclResult_t sharpProxy(struct ncclProxyArgs* args) {
   printf("Gap1! sizesFifo = %d\n", sizesFifo[0]);
   ++(*prevTail);
   
-  fprintf("sharpProxy\n");
+  printf("sharpProxy\n");
 
 
 
