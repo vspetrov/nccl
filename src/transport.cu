@@ -195,10 +195,12 @@ struct netSendResources {
 
 ncclResult_t sharpProxy(struct ncclProxyArgs* args) {
   struct ncclRing* ring = args->ring;
-  struct netSendResources* resources = (struct netSendResources*) (ring->send.transportResources);
+  struct netSendResources* resources = (struct netSendResources*) (ring->sharp.transportResources);
   const int llMode = args->llMode;
 
   volatile uint64_t* prevTail = &resources->hostRecvMem->tail;
+  volatile uint64_t* prevTail2 = &resources->hostSendMem->tail;
+
   struct ncclSendMem* prevMem = resources->hostDevMem ? resources->hostDevMem : resources->hostSendMem;
   volatile uint64_t* prevHead = llMode ? &prevMem->llHead : &prevMem->head;
   struct ncclRecvMem* localMem = resources->cudaSupport ? resources->devNetMem : resources->hostRecvMem;
@@ -208,9 +210,16 @@ ncclResult_t sharpProxy(struct ncclProxyArgs* args) {
   int sliceSize = buffSize / args->substeps;
 
   while (*prevHead > *prevTail){
-    printf("Gap! sizesFifo = %d\n", sizesFifo[0]);
+    printf("Gap1! sizesFifo = %d\n", sizesFifo[0]);
     ++(*prevTail);
   }
+
+  while (*prevHead > *prevTail2){
+    printf("Gap2! sizesFifo = %d\n", sizesFifo[0]);
+    ++(*prevTail2);
+  }
+
+
   return ncclSuccess;
 }
 
