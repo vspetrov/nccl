@@ -98,6 +98,8 @@ ncclResult_t transportStartProxies(struct ncclComm* comm);
 
 
 ncclResult_t sharpConnect(struct ncclConnect* connectInfo, struct ncclConnector* send);
+ncclResult_t sharpSetup(ncclTinfo_t* myOpaqueInfo, ncclTinfo_t* peerOpaqueInfo, struct ncclConnect* connectInfo, struct ncclRing* ring);
+
 
 #include <unistd.h>
 

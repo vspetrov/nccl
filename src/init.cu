@@ -318,10 +318,8 @@ static ncclResult_t selectTransport(struct ncclInfo* myInfo, struct ncclInfo* pe
       transportComm = &transport->send;
       break;
      case(2):
-      t=2;
-      transportComm = &transport->send;
-      NCCLCHECK(transportComm->setup(myInfo->tinfo+t, peerInfo->tinfo+t, connect, ring));
-      *transportRet = transport;
+      NCCLCHECK(sharpSetup(myInfo->tinfo+t, peerInfo->tinfo+t, connect, ring));
+      *transportRet = ncclTransports+2;
       return ncclSuccess;
       break;
      default:

@@ -173,11 +173,6 @@ void* persistentThread(void *opaqueInfo) {
 }
 
 
-ncclResult_t setupSharp(){
-
-
-}
-
 ncclResult_t doSharp (struct ncclProxyArgs* args){
   fprintf(stderr,"waaaaaa\n");
   return ncclSuccess;
@@ -214,6 +209,33 @@ ncclResult_t netSharpProxy(struct ncclProxyArgs* args) {
 
   return ncclSuccess;
 
+}
+
+ncclResult_t sharpSetup(ncclTinfo_t* myOpaqueInfo, ncclTinfo_t* peerOpaqueInfo, struct ncclConnect* connectInfo, struct ncclRing* ring) {
+  struct netSendResources* resources;
+  NCCLCHECK(ncclCalloc(&resources, 1));
+  ring->send.transportResources = resources;
+
+  struct netInfo* myInfo = (struct netInfo*)myOpaqueInfo;
+  resources->cudaSupport = false;
+
+  // Get user's GDR READ setting
+
+  // Determine whether the GPU has NVLink
+  int cudaDev;
+  CUDACHECK(cudaGetDevice(&cudaDev));
+
+  resources->cudaSupport = true;
+
+  int size = offsetof(struct ncclRecvMem, buff)+ring->buffSize;
+  if (resources->cudaSupport) {
+    NCCLCHECK(ncclCudaCalloc((char**)(&resources->devNetMem), size));
+  }
+
+  NCCLCHECK(ncclCudaHostAlloc((void**)&resources->hostRecvMem, (void**)&resources->devHostRecvMem, size));
+  NCCLCHECK(ncclCudaHostAlloc((void**)&resources->hostSendMem, (void**)&resources->devHostSendMem, size));
+
+  return ncclSuccess;
 }
 
 ncclResult_t sharpConnect(struct ncclConnect* connectInfo, struct ncclConnector* send) {
