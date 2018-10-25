@@ -207,12 +207,16 @@ ncclResult_t sharpProxy(struct ncclProxyArgs* args) {
   int buffSize = llMode ? NCCL_LL_BUFF_SIZE : ring->buffSize;
   int sliceSize = buffSize / args->substeps;
 
-  while (*prevHead > *prevTail){
-    printf("Gap1! sizesFifo = %d\n", sizesFifo[0]);
-    ++(*prevTail);
+  while (!(*prevHead)){ 
+    ;;
   }
+  printf("Gap1! sizesFifo = %d\n", sizesFifo[0]);
+  ++(*prevTail);
+  
+  fprintf("sharpProxy\n");
 
-  fprintf(stderr, " SHARP PROXY \n");
+
+
   return ncclSuccess;
 }
 
