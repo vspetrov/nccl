@@ -16,12 +16,13 @@
   if (noffset == buffSize) noffset = 0;
 
 template<int UNROLL, class FUNC, typename T>
-__device__ void ncclSharpAllReduceKernel(struct CollectiveArgs* args) {
+__device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
   const int tid = threadIdx.x;
   const int nthreads = blockDim.x - 1;
   const int bid = args->bid;
   __shared__ T* sharedNextOutput;
-  struct ncclComm* comm = args->comm->nodeComm;
+  if (threadIdx.x == 0) printf("%s:%d\n", __FUNCTION__, __LINE__);
+  struct ncclComm* comm = args->comm;
   struct ncclRing* ring = comm->rings+blockIdx.x;
   int prevdirect = ring->recv.conn.direct;
   int nextdirect = ring->send.conn.direct;
@@ -31,9 +32,10 @@ __device__ void ncclSharpAllReduceKernel(struct CollectiveArgs* args) {
   PostFlag postDoneToPrev(ring->recv.conn.head, ALLREDUCE_SUBSTEPS, NULL, 0);
   PostFlag postReadyToNext(ring->send.conn.tail, 0, ring->send.conn.fifo, ALLREDUCE_BUFCHUNKS*ALLREDUCE_SUBSTEPS);
 
-  struct ncclRing* netRing = args->comm->netComm->rings+blockIdx.x;
+  struct ncclRing* netRing = comm->rings+blockIdx.x;
 
   WaitFlag waitSharp(netRing->sharp.conn.tail, 1);
+
   PostFlag postSharp(netRing->sharp.conn.head, 1, netRing->sharp.conn.fifo, ALLREDUCE_SUBSTEPS);
 
   typedef Primitives<UNROLL, ALLREDUCE_SUBSTEPS, T, FUNC> Prims;
@@ -44,7 +46,7 @@ __device__ void ncclSharpAllReduceKernel(struct CollectiveArgs* args) {
   const int buffSize = ring->buffSize / sizeof(T);
   const int sliceSize = buffSize / ALLREDUCE_BUFCHUNKS;
   const ssize_t loopSize = args->nRings*(ssize_t)sliceSize;
-
+  if (threadIdx.x == 0) printf("%s:%d\n", __FUNCTION__, __LINE__);
   if (tid == 0) {
     // Update in case we skipped some collectives
     *ring->recv.conn.opCount = args->opCount;
@@ -61,6 +63,7 @@ __device__ void ncclSharpAllReduceKernel(struct CollectiveArgs* args) {
       *ptr = nullptr;
     }
   }
+  if (threadIdx.x == 0) printf("%s:%d\n", __FUNCTION__, __LINE__);
   __syncthreads();
 
   uint64_t step = 0ULL;
@@ -71,7 +74,7 @@ __device__ void ncclSharpAllReduceKernel(struct CollectiveArgs* args) {
   T * __restrict__ thisOutput = (T*)args->ThisOutput;
   T * __restrict__ prevInput = (T*)ring->recv.conn.buff;
   T * __restrict__ nextOutput = (T*)ring->send.conn.buff;
-
+  if (threadIdx.x == 0) printf("%s:%d\n", __FUNCTION__, __LINE__);
   for (ssize_t gridOffset = 0; gridOffset < size; gridOffset += nranks*loopSize) {
     int chunkSize = min(sliceSize, DIVUP(size-gridOffset,nranks*args->nRings));
     ALIGN_SIZE(chunkSize, nthreads*sizeof(uint64_t)/sizeof(T));
@@ -114,7 +117,7 @@ __device__ void ncclSharpAllReduceKernel(struct CollectiveArgs* args) {
 
       NEXT_STEP;
     }
-
+  if (threadIdx.x == 0) printf("%s:%d\n", __FUNCTION__, __LINE__);
     // step k-1: reduce this buffer and data, which will produce the final
     // result that we store in this data and push to the next GPU
     slice = ring->devUserRanks[0];
@@ -134,11 +137,19 @@ __device__ void ncclSharpAllReduceKernel(struct CollectiveArgs* args) {
     NEXT_STEP;
 
     __syncthreads();
+    #if 0
     postSharp.postSize(0,sliceSize);
-    __threadfence_system(); 
-    postSharp.post(0);
-    waitSharp.wait(0);
 
+
+    __threadfence_system();
+       printf("%s:%d\n", __FUNCTION__, __LINE__);
+    postSharp.post(1);
+   printf("%s:%d\n", __FUNCTION__, __LINE__);
+   __syncthreads();
+    waitSharp.wait(0);
+   printf("%s:%d\n", __FUNCTION__, __LINE__);
+#endif
+   __syncthreads();
     // k-2 steps: copy to next GPU
     if (prevdirect) {
       for (int j=1; j<nranks-1; ++j) {
@@ -180,7 +191,7 @@ __device__ void ncclSharpAllReduceKernel(struct CollectiveArgs* args) {
 
         NEXT_STEP;
       }
-
+ printf("%s:%d\n", __FUNCTION__, __LINE__);
       // Make final copy from buffer to dest.
       slice = ring->devUserRanks[1];
       offset = chunkOffset + slice * chunkSize;
@@ -196,7 +207,7 @@ __device__ void ncclSharpAllReduceKernel(struct CollectiveArgs* args) {
           postDoneToPrev);
     }
   }
-
+ printf("%s:%d\n", __FUNCTION__, __LINE__);
   if (tid == 0) {
     // Wait for next to have consumed all data before we reset the flag
     waitDoneFromNext.wait(ALLREDUCE_SUBSTEPS*(step + ALLREDUCE_BUFCHUNKS));
@@ -205,16 +216,19 @@ __device__ void ncclSharpAllReduceKernel(struct CollectiveArgs* args) {
     __threadfence_system();
     *ring->recv.conn.opCount = args->opCount+1;
   }
+   printf("%s:%d\n", __FUNCTION__, __LINE__);
 }
 
 
 template<int UNROLL, class FUNC, typename T>
-__device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
+__device__ void nccl__AllReduceKernel(struct CollectiveArgs* args) {
   const int tid = threadIdx.x;
   const int nthreads = blockDim.x - 1;
   const int bid = args->bid;
   __shared__ T* sharedNextOutput;
-  struct ncclComm* comm = args->comm;
+  struct ncclComm* comm = args->comm->nodeComm;
+  printf("%s:%d, comm %p, rings comm->rings %p\n",
+         __FUNCTION__, __LINE__, comm, comm->rings);
   struct ncclRing* ring = comm->rings+blockIdx.x;
   int prevdirect = ring->recv.conn.direct;
   int nextdirect = ring->send.conn.direct;
@@ -411,6 +425,7 @@ __device__ void ncclAllReduceLLKernel(struct CollectiveArgs* args) {
   volatile int * sizesFifo = ring->send.conn.llFifo;
   uint64_t sendHead = sendHeadPtr[0];
 
+  printf("%s:%d\n", __FUNCTION__, __LINE__);
   typedef LLPrimitives<T, FUNC> LL;
 
   const ssize_t size = args->N;

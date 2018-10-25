@@ -6,7 +6,7 @@
 
 #include "core.h"
 #include "common_coll.h"
-
+ncclResult_t doSharp (struct ncclProxyArgs* args);
 extern struct ncclTransport p2pTransport;
 extern struct ncclTransport shmTransport;
 extern struct ncclTransport netTransport;
@@ -17,16 +17,21 @@ struct ncclTransport ncclTransports[NTRANSPORTS] = {
   netTransport,
 };
 
-static void FifoPullArgs(struct transportProxyInfo* info, struct ncclProxyArgs *args) {
+static void FifoPullArgs(struct transportProxyInfo* info, struct ncclProxyArgs *args, bool isSharp) {
   struct ncclProxyArgs *fifoArgs = info->argsFifo + (info->argsFifoHead % TRANSPORT_PROXY_FIFO_SIZE);
+  if (isSharp) printf("%s:%d\n", __FUNCTION__, __LINE__);
   pthread_mutex_lock(&info->mutex);
-  while (fifoArgs->active == 0)
+  if (isSharp)  printf("%s:%d\n", __FUNCTION__, __LINE__);
+  while (fifoArgs->active == 0) {
     pthread_cond_wait(&info->cond, &info->mutex);
+    if (isSharp) printf("%s:%d\n", __FUNCTION__, __LINE__);
+  }
   __sync_synchronize();
   memcpy(args, fifoArgs, sizeof(struct ncclProxyArgs));
   __sync_synchronize();
   fifoArgs->active = 0;
   pthread_cond_signal(&info->cond);
+  if (isSharp) printf("%s:%d\n", __FUNCTION__, __LINE__);
   pthread_mutex_unlock(&info->mutex);
   info->argsFifoHead++;
 }
@@ -116,11 +121,13 @@ ncclResult_t transportSaveProxies(int substeps, int subchunks, int nstepsPerRoun
   int nsteps = nstepsPerRound * nrounds * substeps;
   TRACE(NET,"opCount %lx substeps %d subchunks %d nrounds %d nsteps %d comm %p", comm->opCount, subchunks, subchunks, nrounds, nsteps, comm);
   TRACE(NET,"opCount %lx nbytes %zi nrings %d buffSize %d pattern %d comm %p", comm->opCount, nbytes, nrings, buffSize, pattern, comm);
+  printf("NRINGS %d\n", nrings);
   for (int r=0; r<nrings; r++) {
     struct ncclRing* ring = comm->rings+((comm->myParams->gridDim.x+r)%comm->nRings);
     struct ncclProxyArgs args = { ring, substeps*subchunks, nsteps, comm->opCount, llMode, 0 };
     SaveProxy(&ring->recv, &args, NeedProxy(RECV, pattern, ring, comm->nRanks));
     SaveProxy(&ring->send, &args, NeedProxy(SEND, pattern, ring, comm->nRanks));
+    SaveProxy(&ring->sharp, &args, 1);
   }
   return ncclSuccess;
 }
@@ -129,6 +136,7 @@ ncclResult_t transportStartProxies(ncclComm* comm) {
   for (int r=0; r<comm->nRings; r++) {
     FifoPushArgs(comm->rings[r].send.proxyInfo);
     FifoPushArgs(comm->rings[r].recv.proxyInfo);
+    FifoPushArgs(comm->rings[r].sharp.proxyInfo);
   }
   pthread_yield(); // Let other threads run
   return ncclSuccess;
@@ -144,7 +152,15 @@ void* persistentThread(void *opaqueInfo) {
   SetProxyReady(info);
   while (1) {
     struct ncclProxyArgs args;
-    FifoPullArgs(info, &args);
+    if (info->func == &doSharp) {
+        fprintf(stderr, "BEFORE\n");
+    }
+    
+    FifoPullArgs(info, &args, (info->func == &doSharp));
+    if (info->func == &doSharp) {
+        fprintf(stderr, "AFTER\n");
+    }
+    
     if (args.active == -1) {
       // Main thread asked to stop
       return NULL;

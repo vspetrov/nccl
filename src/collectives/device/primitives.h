@@ -34,7 +34,7 @@ class WaitFlag {
   __device__ __forceinline__
   WaitFlag(volatile uint64_t * const flag, const int shift) : flag(flag), shift(shift) { }
   __device__ __forceinline__
-  void wait(uint64_t val) { while ((*flag + shift) < val) /*SPIN*/; }
+      void wait(uint64_t val) { printf("flag = %p, val %llx\n", flag, val); while ((*flag + shift) < val) /*SPIN*/; }
 };
 
 
@@ -47,7 +47,7 @@ class PostFlag {
   __device__ __forceinline__
   PostFlag(volatile uint64_t* const flag, const int shift, volatile int* const fifo, const int fifo_size) : flag(flag), shift(shift), fifo(fifo), fifo_size(fifo_size) { }
   __device__ __forceinline__
-  void post(uint64_t val) { *flag = (val - shift); }
+      void post(uint64_t val) { *flag = (val - shift); printf("*flag = %llx\n", (*flag));}
   __device__ __forceinline__
   void postSize(uint64_t step, int size) { if (fifo != NULL) fifo[step%fifo_size] = size; };
 };
