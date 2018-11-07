@@ -13,7 +13,7 @@
 #define NTRANSPORTS 3
 
 extern struct ncclTransport ncclTransports[];
-
+extern struct ncclTransport sharpTransport;
 // Forward declarations
 struct ncclRing;
 struct ncclConnector;

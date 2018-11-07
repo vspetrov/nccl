@@ -10,6 +10,7 @@
 extern struct ncclTransport p2pTransport;
 extern struct ncclTransport shmTransport;
 extern struct ncclTransport netTransport;
+extern struct ncclTransport sharpTransport;
 
 struct ncclTransport ncclTransports[NTRANSPORTS] = {
   p2pTransport,
@@ -120,6 +121,7 @@ ncclResult_t transportSaveProxies(int substeps, int subchunks, int nstepsPerRoun
     struct ncclProxyArgs args = { ring, substeps*subchunks, nsteps, comm->opCount, llMode, 0 };
     SaveProxy(&ring->recv, &args, NeedProxy(RECV, pattern, ring, comm->nRanks));
     SaveProxy(&ring->send, &args, NeedProxy(SEND, pattern, ring, comm->nRanks));
+    SaveProxy(&ring->sharp, &args, 1);
   }
   return ncclSuccess;
 }
@@ -128,6 +130,7 @@ ncclResult_t transportStartProxies(ncclComm* comm) {
   for (int r=0; r<comm->nRings; r++) {
     FifoPushArgs(comm->rings[r].send.proxyInfo);
     FifoPushArgs(comm->rings[r].recv.proxyInfo);
+    FifoPushArgs(comm->rings[r].sharp.proxyInfo);
   }
   pthread_yield(); // Let other threads run
   return ncclSuccess;
@@ -143,7 +146,13 @@ void* persistentThread(void *opaqueInfo) {
   SetProxyReady(info);
   while (1) {
     struct ncclProxyArgs args;
+    if (info->func == sharpTransport.send.proxy) {
+        fprintf(stderr, "BEFORE\n");
+    }
     FifoPullArgs(info, &args);
+    if (info->func == sharpTransport.send.proxy) {
+        fprintf(stderr, "AFTER\n");
+    }
     if (args.active == -1) {
       // Main thread asked to stop
       return NULL;
@@ -158,6 +167,10 @@ void* persistentThread(void *opaqueInfo) {
 ncclResult_t transportCreateProxy(int type, struct ncclRing* ring, struct ncclComm* comm) {
   struct ncclConnector* connector = (type == RECV) ? &ring->recv : &ring->send;
   threadFunc_t proxyfunc = (threadFunc_t) ((type == RECV) ? connector->transport->recv.proxy : connector->transport->send.proxy);
+  if (type == 2) {
+    connector = &ring->sharp;
+    proxyfunc = (threadFunc_t) connector->transport->recv.proxy;
+  }
   if (proxyfunc) {
     TRACE(NET,"type %d ring %p proxyfunc %p comm %p", type, ring, proxyfunc, comm);
     struct transportProxyInfo* info;

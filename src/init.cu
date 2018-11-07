@@ -219,6 +219,20 @@ static ncclResult_t selectTransport(struct ncclInfo* myInfo, struct ncclInfo* pe
   for (int t=0; t<NTRANSPORTS; t++) {
     struct ncclTransport *transport = ncclTransports+t;
     struct ncclTransportComm* transportComm = type == 1 ? &transport->send : &transport->recv;
+    switch (type){
+    case 0:
+      transportComm = &transport->recv;
+      break;
+    case 1:
+      transportComm = &transport->send;
+      break;
+    case 2:
+      //transportComm = &sharpTransport
+      fprintf(stderr, "select sharp transport for ring\n");
+      NCCLCHECK(sharpTransport.send.setup(myInfo->tinfo+t, peerInfo->tinfo+t, connect, ring));
+      *transportRet = &sharpTransport;
+      return ncclSuccess;
+    }
     ncclTvalue_t ret = 0;
     NCCLCHECK(transport->canConnect(&ret, myInfo->tinfo+t, peerInfo->tinfo+t));
     if (ret > 0) {
@@ -250,12 +264,13 @@ static ncclResult_t setupRing(struct ncclComm* comm, int ringid, int rank, int n
   int next = ring->userRanks[1];
 
   NCCLCHECK(selectTransport<0>(allInfo+rank, allInfo+prev, connect+0, &ring->recv.transport, ring));
-  NCCLCHECK(selectTransport<1>(allInfo+rank, allInfo+next, connect+1, &ring->send.transport, ring));
+  NCCLCHECK(selectTransport<1>(allInfo+rank, allInfo+next, connect+1, &ring->send.transport, ring)); 
+  NCCLCHECK(selectTransport<2>(allInfo+rank, allInfo+next, connect+1, &ring->sharp.transport, ring));
   NCCLCHECK(transportCreateProxy(0, ring, comm));
   NCCLCHECK(transportCreateProxy(1, ring, comm));
+  NCCLCHECK(transportCreateProxy(2, ring, comm));
   return ncclSuccess;
 }
-
 static ncclResult_t fillConnect(struct ncclInfo* allInfo, int nranks, int rank, int* connectTransport, ncclTvalue_t* connectValue) {
   for (int r=0; r<nranks; r++) {
     connectTransport[r] = -1;
@@ -488,7 +503,8 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, ncclUniqueId* comm
     NCCLCHECK(setupRing(comm, r, rank, nranks, ringRanks, allInfo, connect));
     NCCLCHECK(bootstrapRingExchange(commState, connect, ring->userRanks[nranks-1], ring->userRanks[1], sizeof(struct ncclConnect)));
     NCCLCHECK(ring->send.transport->send.connect(connect+1, &ring->send));
-    NCCLCHECK(ring->recv.transport->recv.connect(connect+0, &ring->recv));
+    NCCLCHECK(ring->recv.transport->recv.connect(connect+0, &ring->recv)); 
+    NCCLCHECK(ring->sharp.transport->send.connect(connect+0, &ring->sharp)); 
   }
   free(rings);
   free(allInfo);

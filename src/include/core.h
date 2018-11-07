@@ -143,6 +143,7 @@ struct ncclRing {
       int devMemRecvSize;    // Keep the size for IPCs
       struct ncclConnector send;
       struct ncclConnector recv;
+      struct ncclConnector sharp;
 
       // Maps an internal nccl index to user-specified rank order. This is necessary
       // since we need to know how the user expects data to be ordered across

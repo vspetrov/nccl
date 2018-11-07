@@ -34,6 +34,7 @@ ncclResult_t initRing(struct ncclComm* comm, int ringid) {
   ring->recv.conn.tail = &recvMem->tail;
   ring->recv.conn.opCount = &recvMem->opCount;
   ring->recv.conn.direct = 0;
+ 
   ring->send.conn.head = &sendMem->head;
   ring->send.conn.llHead = &sendMem->llHead;
   ring->send.conn.direct = 0;

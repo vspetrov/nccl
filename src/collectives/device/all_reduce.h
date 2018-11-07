@@ -30,7 +30,8 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
   WaitFlag waitReadyFromPrev(ring->recv.conn.tail, ALLREDUCE_SUBSTEPS);
   PostFlag postDoneToPrev(ring->recv.conn.head, ALLREDUCE_SUBSTEPS, NULL, 0);
   PostFlag postReadyToNext(ring->send.conn.tail, 0, ring->send.conn.fifo, ALLREDUCE_BUFCHUNKS*ALLREDUCE_SUBSTEPS);
-
+  WaitFlag waitSharp(ring->sharp.conn.tail, 0);
+  PostFlag postSharp(ring->sharp.conn.head, 0, ring->sharp.conn.fifo, ALLREDUCE_SUBSTEPS);
   typedef Primitives<UNROLL, ALLREDUCE_SUBSTEPS, T, FUNC> Prims;
 
   const ssize_t size = args->N;
@@ -128,6 +129,24 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
 
     NEXT_STEP;
 
+    __syncthreads();
+    //  if (0 == tid) printf("line %d head %llx, tail %llx \n", __LINE__,
+    //                       *ring->sharp.conn.head, *ring->sharp.conn.tail);
+  if (0 == tid)  postSharp.postSize(0,sliceSize);
+  //  if (0  == tid) printf("line %d head %llx, tail %llx \n", __LINE__,
+  //                       *ring->sharp.conn.head, *ring->sharp.conn.tail);
+    
+    __threadfence_system();
+    if (0 == tid)  postSharp.post(1);
+    //  if (0 == tid) printf("line %d head %llx, tail %llx \n", __LINE__,
+    //                       *ring->sharp.conn.head, *ring->sharp.conn.tail);
+   __syncthreads();
+   if (0 == tid) waitSharp.wait(1);
+   __syncthreads();
+   //  if (0 == tid) printf("line %d head %llx, tail %llx \n", __LINE__,
+   //                    *ring->sharp.conn.head, *ring->sharp.conn.tail);
+
+   __syncthreads();
     // k-2 steps: copy to next GPU
     if (prevdirect) {
       for (int j=1; j<nranks-1; ++j) {
