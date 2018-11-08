@@ -198,6 +198,12 @@ struct ncclColl {
 };
 static_assert(sizeof(struct ncclColl) == (0x10*sizeof(int)), "ncclColl must have a pow2 size");
 
+enum {
+    NCCL_COMM_INIT_MAIN,
+    NCCL_COMM_INIT_NODE,
+    NCCL_COMM_INIT_NET,
+};
+
 struct ncclComm {
   struct ncclRing rings[MAXRINGS];
 
@@ -244,6 +250,14 @@ struct ncclComm {
   int* intraCC; // Only to check all have the same ComputeCap and disable CGMode if not
   struct ncclColl args;
   void* argsptr;
+  int nodeRank;
+  int nodeSize;
+  int netRank;
+  int netSize;
+  int netLeaderRank;
+  int nodeLeaderRank;
+  struct ncclComm *nodeComm;
+  struct ncclComm *netComm;
 };
 
 // Check CUDA calls

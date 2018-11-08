@@ -218,6 +218,7 @@ ncclResult_t ncclEnqueueEvents(ncclComm_t comm) {
 ncclResult_t ncclEnqueueCheck(ncclFunc_t func, const char* primName, const void* sendbuff,
     void* recvbuff, size_t count, ncclDataType_t type, ncclRedOp_t op, int root,
     ncclComm_t comm, cudaStream_t stream) {
+  fprintf(stderr, "Comm = %p %s %d\n", comm, __FILE__, __LINE__); 
   if (comm == NULL) return ncclInvalidArgument;
   // Launch asynchronously if needed
   if (ncclAsyncMode()) {
@@ -238,6 +239,7 @@ end:
     ncclAsyncErrCheck(ret);
     return ret;
   } else {
+    fprintf(stderr, "Args check %s %d\n", __FILE__, __LINE__);
     NCCLCHECK(ArgsCheck(sendbuff, recvbuff, count, type, op, root, comm, primName));
     NCCLCHECK(func(sendbuff, recvbuff, count, type, op, root, comm, stream));
     NCCLCHECK(ncclBarrierEnqueue(comm));

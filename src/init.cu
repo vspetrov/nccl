@@ -28,6 +28,7 @@
 #include <string.h>
 #include <errno.h>
 #include <assert.h>
+#include <inttypes.h>
 
 DebugLevel ncclDebugLevel;
 uint64_t ncclDebugMask = INIT; // Default debug sub-system mask is INIT
@@ -428,7 +429,21 @@ ncclResult_t ncclCommSetIntra(struct ncclComm* comm, int rank, int ranks, struct
   return ncclSuccess;
 }
 
-static ncclResult_t initTransportsRank(struct ncclComm* comm, ncclUniqueId* commId) {
+int compare_hosts(const void *v1, const void *v2) {
+    return *((uint64_t*)v1) > *((uint64_t*)v2);
+}
+
+static inline
+int unique (uint64_t* first, uint64_t* last) {
+    uint64_t *begin = first, *result = first;
+    if (first==last) return 1;
+    while (++first != last) {
+        if (!(*result == *first)) *(++result)=*first;
+    }
+    return (++result - begin);
+}
+
+static ncclResult_t initTransportsRank(struct ncclComm* comm, ncclUniqueId* commId,  int flags, ncclComm_t main_comm) {
   int rank = comm->rank;
   int nranks = comm->nRanks;
   void* commState;
@@ -538,7 +553,45 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, ncclUniqueId* comm
     return ncclInternalError;
   }
   NCCLCHECK(ncclCommSetIntra(comm, intraRank, intraRanks, rankInfos[intraRank0].comm));
+if (flags == NCCL_COMM_INIT_MAIN) {
+      comm->nodeSize = 0;
+      for (int r=0; r<nranks; r++) {
+          if (rankInfos[r].hostHash == rankInfos[rank].hostHash) {
+              if (r == rank) {
+                  comm->nodeRank = comm->nodeSize;
+              }
+              comm->nodeSize++;
+              if (comm->nodeSize == 1) {
+                  comm->nodeLeaderRank = r;
+              }
+          }
+      }
 
+      uint64_t *hosts = (uint64_t*)malloc(nranks*sizeof(uint64_t));
+      for (int i=0; i<nranks; i++) {
+          hosts[i] = rankInfos[i].hostHash;
+	  if (rank==0)
+	    fprintf(stderr,"%" PRIu64 " ", hosts[i]);
+      }
+      qsort(hosts, nranks, sizeof(uint64_t), compare_hosts);
+      comm->netSize = unique(hosts, hosts+nranks);
+
+      for (int i=0; i<comm->netSize; i++) {
+          if (rankInfos[rank].hostHash == hosts[i]) {
+              comm->netRank = i;
+          }
+      }
+      int net_lead_count = 0;
+      for (int i=0; i<nranks; i++) {
+          if (rankInfos[i].hostHash == hosts[0]) {
+              net_lead_count++;
+              if (net_lead_count - 1 == comm->nodeRank) {
+                  comm->netLeaderRank = i;
+                  break;
+              }
+          }
+      }
+ }
   // Barrier
   bootstrapClose(commState);
   return ncclSuccess;
@@ -555,7 +608,7 @@ bool SetCpuAffinity(int cudaDev, nvmlDevice_t* nvmlDevice) {
   return true;
 }
 
-ncclResult_t ncclCommInitRankSync(ncclComm_t* newcomm, int ndev, ncclUniqueId commId, int myrank) {
+ncclResult_t ncclCommInitRankSync(ncclComm_t* newcomm, int ndev, ncclUniqueId commId, int myrank, int flag, ncclComm_t main_comm) {
   cpu_set_t affinitySave;
   sched_getaffinity(0, sizeof(cpu_set_t), &affinitySave);
 
@@ -570,7 +623,7 @@ ncclResult_t ncclCommInitRankSync(ncclComm_t* newcomm, int ndev, ncclUniqueId co
   ncclResult_t res;
 
   NCCLCHECKGOTO(commAlloc(newcomm, ndev, myrank), res, cleanup);
-  NCCLCHECKGOTO(initTransportsRank(*newcomm, &commId), res, cleanup);
+  NCCLCHECKGOTO(initTransportsRank(*newcomm, &commId, flag, main_comm), res, cleanup);
   NCCLCHECKGOTO(devCommSetup(*newcomm), res, cleanup);
 
   sched_setaffinity(0, sizeof(cpu_set_t), &affinitySave);
@@ -606,10 +659,44 @@ ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId comm
   if (ncclAsyncMode()) {
     int cudaDev;
     CUDACHECK(cudaGetDevice(&cudaDev));
-    return ncclAsyncInit(ncclCommInitRankSync, cudaDev, newcomm, nranks, commId, myrank);
+    return ncclAsyncInit(ncclCommInitRankSync, cudaDev, newcomm, nranks, commId, myrank, NCCL_COMM_INIT_MAIN, NULL);
   } else {
-    return ncclCommInitRankSync(newcomm, nranks, commId, myrank);
+    ncclCommInitRankSync(newcomm, nranks, commId, myrank, NCCL_COMM_INIT_MAIN, NULL);
   }
+   fprintf(stderr,"STARTING CUSTOM\n");
+  {
+      (*newcomm)->nodeComm = NULL;
+      (*newcomm)->netComm  = NULL;
+      //   (*newcomm)->sharpComm  = NULL;
+      fprintf(stderr,"STARTING CUSTOM\n");
+      ncclComm_t main_comm = *newcomm;
+      printf("####Main_comm net size: %d\n", main_comm->netSize);
+      if (main_comm->netSize > 1) {
+          ncclUniqueId *uids;
+          cudaStream_t s;
+          CUDACHECK(cudaMallocManaged(&uids, 2*sizeof(ncclUniqueId)*(nranks+1)));
+          CUDACHECK(cudaStreamCreate(&s));
+          if (main_comm->nodeSize > 1 && main_comm->rank == main_comm->nodeLeaderRank) {
+              NCCLCHECK(ncclGetUniqueId(&uids[0]));
+               fprintf(stderr, "NODE UID: %" PRIx64 ":%" PRIx64 "\n", ((uint64_t*)&uids[0])[0], ((uint64_t*)&uids[0])[1]);
+          }
+          if (main_comm->rank == main_comm->netLeaderRank) {
+              NCCLCHECK(ncclGetUniqueId(&uids[1]));
+               fprintf(stderr, "NET UID: %" PRIx64 ":%" PRIx64 "\n", ((uint64_t*)&uids[1])[0], ((uint64_t*)&uids[1])[1]);
+          }
+          NCCLCHECK(ncclAllGather(uids, uids+2, 2*sizeof(ncclUniqueId), ncclChar, *newcomm, s));
+          CUDACHECK(cudaStreamSynchronize(s));
+
+          ncclUniqueId nodeUid = (uids + 2 + 2*main_comm->nodeLeaderRank)[0];
+          ncclUniqueId  netUid = (uids + 2 + 2*main_comm->netLeaderRank)[1];
+           fprintf(stderr, "NET UID RST: %" PRIx64 ":%" PRIx64 "\n", ((uint64_t*)&netUid)[0], ((uint64_t*)&netUid)[1]);
+           fprintf(stderr, "NODE UID RST: %" PRIx64 ":%" PRIx64 "\n", ((uint64_t*)&nodeUid)[0], ((uint64_t*)&nodeUid)[1]);
+          NCCLCHECK(ncclCommInitRankSync(&main_comm->nodeComm, main_comm->nodeSize, nodeUid, main_comm->nodeRank, NCCL_COMM_INIT_NODE, main_comm));
+          NCCLCHECK(ncclCommInitRankSync(&main_comm->netComm,  main_comm->netSize,  netUid,  main_comm->netRank,  NCCL_COMM_INIT_NET, main_comm));
+           fprintf(stderr, "NODE COMM %p, NET_COMM %p\n", main_comm->nodeComm, main_comm->netComm);
+      }
+  }
+  return ncclSuccess;
 }
 
 static ncclResult_t initTransportsAll(struct ncclComm** comms, const int* devs, int nranks) {
