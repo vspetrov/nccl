@@ -247,7 +247,7 @@ static ncclResult_t selectTransport(struct ncclInfo* myInfo, struct ncclInfo* pe
   return ncclInternalError;
 }
 
-static ncclResult_t setupRing(struct ncclComm* comm, int ringid, int rank, int nranks, int* ringRanks, struct ncclInfo* allInfo, struct ncclConnect* connect) {
+static ncclResult_t setupRing(struct ncclComm* comm, int ringid, int rank, int nranks, int* ringRanks, struct ncclInfo* allInfo, struct ncclConnect* connect, int flag) {
   NCCLCHECK(initRing(comm, ringid));
 
   struct ncclRing* ring = comm->rings+ringid;
@@ -269,7 +269,8 @@ static ncclResult_t setupRing(struct ncclComm* comm, int ringid, int rank, int n
   NCCLCHECK(selectTransport<2>(allInfo+rank, allInfo+next, connect+1, &ring->sharp.transport, ring));
   NCCLCHECK(transportCreateProxy(0, ring, comm));
   NCCLCHECK(transportCreateProxy(1, ring, comm));
-  NCCLCHECK(transportCreateProxy(2, ring, comm));
+  if (flag != NCCL_COMM_INIT_MAIN)
+    NCCLCHECK(transportCreateProxy(2, ring, comm));
   return ncclSuccess;
 }
 static ncclResult_t fillConnect(struct ncclInfo* allInfo, int nranks, int rank, int* connectTransport, ncclTvalue_t* connectValue) {
@@ -515,7 +516,7 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, ncclUniqueId* comm
     int* ringRanks = rings+r*nranks;
     struct ncclRing *ring = comm->rings+r;
     struct ncclConnect connect[2];
-    NCCLCHECK(setupRing(comm, r, rank, nranks, ringRanks, allInfo, connect));
+    NCCLCHECK(setupRing(comm, r, rank, nranks, ringRanks, allInfo, connect,flags));
     NCCLCHECK(bootstrapRingExchange(commState, connect, ring->userRanks[nranks-1], ring->userRanks[1], sizeof(struct ncclConnect)));
     NCCLCHECK(ring->send.transport->send.connect(connect+1, &ring->send));
     NCCLCHECK(ring->recv.transport->recv.connect(connect+0, &ring->recv)); 
@@ -692,14 +693,14 @@ ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId comm
            fprintf(stderr, "NET UID RST: %" PRIx64 ":%" PRIx64 "\n", ((uint64_t*)&netUid)[0], ((uint64_t*)&netUid)[1]);
            fprintf(stderr, "NODE UID RST: %" PRIx64 ":%" PRIx64 "\n", ((uint64_t*)&nodeUid)[0], ((uint64_t*)&nodeUid)[1]);
           NCCLCHECK(ncclCommInitRankSync(&main_comm->nodeComm, main_comm->nodeSize, nodeUid, main_comm->nodeRank, NCCL_COMM_INIT_NODE, main_comm));
-          NCCLCHECK(ncclCommInitRankSync(&main_comm->netComm,  main_comm->netSize,  netUid,  main_comm->netRank,  NCCL_COMM_INIT_NET, main_comm));
+	  //          NCCLCHECK(ncclCommInitRankSync(&main_comm->netComm,  main_comm->netSize,  netUid,  main_comm->netRank,  NCCL_COMM_INIT_NET, main_comm));
            fprintf(stderr, "NODE COMM %p, NET_COMM %p\n", main_comm->nodeComm, main_comm->netComm);
       }
   }
   return ncclSuccess;
 }
 
-static ncclResult_t initTransportsAll(struct ncclComm** comms, const int* devs, int nranks) {
+static ncclResult_t initTransportsAll(struct ncclComm** comms, const int* devs, int nranks, int flags) {
   struct ncclInfo* allInfo;
   NCCLCHECK(ncclCalloc(&allInfo, nranks));
   for (int rank=0; rank<nranks; rank++) {
@@ -762,7 +763,7 @@ static ncclResult_t initTransportsAll(struct ncclComm** comms, const int* devs, 
     int* ringRanks = rings+r*nranks;
     for (int rank=0; rank<nranks; rank++) {
       CUDACHECK(cudaSetDevice(devs[rank]));
-      NCCLCHECK(setupRing(comms[rank], r, rank, nranks, ringRanks, allInfo, connect+2*rank));
+      NCCLCHECK(setupRing(comms[rank], r, rank, nranks, ringRanks, allInfo, connect+2*rank, flags));
     }
     // RingExchange connect information
     for (int rank=0; rank<nranks; rank++) {
@@ -776,6 +777,7 @@ static ncclResult_t initTransportsAll(struct ncclComm** comms, const int* devs, 
     for (int rank=0; rank<nranks; rank++) {
       CUDACHECK(cudaSetDevice(devs[rank]));
       struct ncclRing *ring = comms[rank]->rings+r;
+      cudaMallocManaged(&(ring->tempBuff), 1000 * sizeof(float));
       NCCLCHECK(ring->send.transport->send.connect(connect+2*rank+1, &ring->send));
       NCCLCHECK(ring->recv.transport->recv.connect(connect+2*rank+0, &ring->recv));
     }
@@ -833,7 +835,8 @@ ncclResult_t ncclCommInitAll(ncclComm_t* comms, int ndev, const int* devlist) {
 
   sched_setaffinity(0, sizeof(cpu_set_t), &affinitySave);
 
-  NCCLCHECKGOTO(initTransportsAll(comms, ncclDevList, ndev), res, cleanup);
+  //TODO
+  NCCLCHECKGOTO(initTransportsAll(comms, ncclDevList, ndev,0), res, cleanup);
 
   for(rank=0; rank<ndev; ++rank) {
     cudaDev = ncclDevList[rank];

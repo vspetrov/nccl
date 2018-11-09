@@ -6,7 +6,7 @@
 #include "nvlink.h"
 #include <cuda_runtime.h>
 #include <assert.h>
-
+#include <mpi.h>
 
 struct sharpSendResources {
   void* netSendComm;
@@ -87,10 +87,35 @@ ncclResult_t sharpProxy(struct ncclProxyArgs* args) {
   while (!(*prevHead)){ 
     ;;
   }
-  printf("Gap1! sizesFifo = %d\n", sizesFifo[0]);
-  ++(*prevTail);
+  MPI_Comm sepComm;
+  int rank;
+  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+  int color = rank % 2;
+  MPI_Comm_split(MPI_COMM_WORLD, color, rank, &sepComm);
+  for(int k = 0; k<4;k++){
+    if (rank == k){
+      fprintf(stderr, "before allreduce Thread - Rank %d: ", rank);
+      for(int l = 0; l < 8; l++)
+	fprintf(stderr, "%f ", ((float*)ring->recv.conn.buff)[l+524288]);
+      fprintf(stderr, "\n");
+    }
+      MPI_Barrier(MPI_COMM_WORLD);
+  }
   
-  printf("sharpProxy\n");
+  MPI_Allreduce(MPI_IN_PLACE, ((float*)ring->recv.conn.buff)+524288, 8, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+  
+  for(int k = 0; k<4;k++){
+    if (rank == k){
+      fprintf(stderr, "after allreduce Thread - Rank %d: ", rank);
+      for(int l = 0; l < 8; l++)
+	fprintf(stderr, "%f ", ((float*)ring->recv.conn.buff)[l]);
+      fprintf(stderr, "\n");
+    }
+      MPI_Barrier(MPI_COMM_WORLD);
+  }
+  
+  MPI_Comm_free(&sepComm);
+  ++(*prevTail);  
   return ncclSuccess;
 }
 

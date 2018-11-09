@@ -144,7 +144,7 @@ struct ncclRing {
       struct ncclConnector send;
       struct ncclConnector recv;
       struct ncclConnector sharp;
-
+      void *tempBuff;
       // Maps an internal nccl index to user-specified rank order. This is necessary
       // since we need to know how the user expects data to be ordered across
       // devices. Ordered from current device.
@@ -174,7 +174,6 @@ struct CollectiveArgs {
   // local and remote input, output, and buffer
   const void * ThisInput;
   void * ThisOutput;
-
   // general parameters
   size_t N;
   uint32_t root;
