@@ -9,7 +9,14 @@
 
 #include "nccl.h"
 
-extern void* sharpBootstrapCtx;
+//extern void* sharpBootstrapCtx;
+
+struct extState {
+  void* extRecvComm;
+  void* extSendComm;
+  int rank;
+  int nranks;
+};
 
 ncclResult_t bootstrapCreateRoot(ncclUniqueId* commId, bool idFromEnv);
 ncclResult_t bootstrapGetUniqueId(ncclUniqueId* out);

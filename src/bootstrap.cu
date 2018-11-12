@@ -195,12 +195,6 @@ ncclResult_t bootstrapGetUniqueId(ncclUniqueId* out) {
   return ncclSuccess;
 }
 
-struct extState {
-  void* extRecvComm;
-  void* extSendComm;
-  int rank;
-  int nranks;
-};
 
 ncclResult_t bootstrapInit(ncclUniqueId* commId, int rank, int nranks, void** commState) {
   struct extId* id = (struct extId*)commId;
@@ -291,6 +285,7 @@ ncclResult_t bootstrapClose(void* commState) {
   return ncclSuccess;
 }
 
+#if 0
 void* sharpBootstrapCtx = NULL;
 
 int oob_barrier(void *ctx) {
@@ -328,3 +323,4 @@ int oob_bcast(void *ctx, void *buf, int size, int root) {
     free(tmp);
     return 0;
 }
+#endif

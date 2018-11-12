@@ -247,7 +247,7 @@ static ncclResult_t selectTransport(struct ncclInfo* myInfo, struct ncclInfo* pe
   return ncclInternalError;
 }
 
-static ncclResult_t setupRing(struct ncclComm* comm, int ringid, int rank, int nranks, int* ringRanks, struct ncclInfo* allInfo, struct ncclConnect* connect, int flag) {
+static ncclResult_t setupRing(struct ncclComm* comm, int ringid, int rank, int nranks, int* ringRanks, struct ncclInfo* allInfo, struct ncclConnect* connect, int flag, ncclComm_t main_comm) {
   NCCLCHECK(initRing(comm, ringid));
 
   struct ncclRing* ring = comm->rings+ringid;
@@ -267,7 +267,8 @@ static ncclResult_t setupRing(struct ncclComm* comm, int ringid, int rank, int n
   NCCLCHECK(selectTransport<0>(allInfo+rank, allInfo+prev, connect+0, &ring->recv.transport, ring));
   NCCLCHECK(selectTransport<1>(allInfo+rank, allInfo+next, connect+1, &ring->send.transport, ring));
   if (flag == NCCL_COMM_INIT_NODE){
-    ring->sharpNodeRank = comm->nodeRank;
+    ring->mpiColor = comm->nodeRank;
+    ring->sharpCommRank = main_comm->netRank;
     ring->sharpCommSize = comm->nodeSize;
     NCCLCHECK(selectTransport<2>(allInfo+rank, allInfo+next, connect+1, &ring->sharp.transport, ring));
     NCCLCHECK(transportCreateProxy(2, ring, comm));
@@ -448,6 +449,43 @@ int unique (uint64_t* first, uint64_t* last) {
     return (++result - begin);
 }
 
+static void* sharpBootstrapCtx = NULL;
+int oob_barrier(void *ctx) {
+    struct extState *st = (struct extState*)sharpBootstrapCtx;
+    int nranks = st->nranks;
+    void *tmp = malloc(nranks);
+    bootstrapAllGather(st, tmp, 1);
+    free(tmp);
+    return 0;
+}
+
+int oob_gather(void *ctx, int root, void *sbuf, void *rbuf, int size) {
+    struct extState *st = (struct extState*)sharpBootstrapCtx;
+    int nranks = st->nranks;
+    void *tmp = malloc(nranks*size);
+    memcpy((void*)((ptrdiff_t)tmp + size*st->rank), sbuf, size);
+    bootstrapAllGather(st, tmp, size);
+    if (st->rank == root) {
+        memcpy(rbuf, tmp, nranks*size);
+    }
+    free(tmp);
+    return 0;
+}
+
+int oob_bcast(void *ctx, void *buf, int size, int root) {
+    struct extState* state = (struct extState*)sharpBootstrapCtx;
+    void *tmp = malloc(size*state->nranks);
+    if (state->rank == root) {
+        memcpy((void*)((ptrdiff_t)tmp+size*state->rank), buf, size);
+    }
+    bootstrapAllGather(state, tmp, size);
+    if (state->rank != root) {
+        memcpy(buf, (void*)((ptrdiff_t)tmp+size*root), size);
+    }
+    free(tmp);
+    return 0;
+}
+
 static ncclResult_t initTransportsRank(struct ncclComm* comm, ncclUniqueId* commId,  int flags, ncclComm_t main_comm) {
   int rank = comm->rank;
   int nranks = comm->nRanks;
@@ -520,12 +558,41 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, ncclUniqueId* comm
     int* ringRanks = rings+r*nranks;
     struct ncclRing *ring = comm->rings+r;
     struct ncclConnect connect[2];
-    NCCLCHECK(setupRing(comm, r, rank, nranks, ringRanks, allInfo, connect,flags));
+    NCCLCHECK(setupRing(comm, r, rank, nranks, ringRanks, allInfo, connect,flags, main_comm));
     NCCLCHECK(bootstrapRingExchange(commState, connect, ring->userRanks[nranks-1], ring->userRanks[1], sizeof(struct ncclConnect)));
     NCCLCHECK(ring->send.transport->send.connect(connect+1, &ring->send));
     NCCLCHECK(ring->recv.transport->recv.connect(connect+0, &ring->recv));
-    if (flags == NCCL_COMM_INIT_NODE)
-    NCCLCHECK(ring->sharp.transport->send.connect(connect+0, &ring->sharp)); 
+    if (flags == NCCL_COMM_INIT_NODE){
+        NCCLCHECK(ring->sharp.transport->send.connect(connect+0, &ring->sharp));
+#if 1
+        fprintf(stderr,"CREATING SHARP COMM\n");
+         /* Initialize sharp communicator */
+      void* commStateNet;
+      NCCLCHECK(bootstrapInit(&(main_comm->netID), main_comm->netRank, main_comm->netSize, &commStateNet));
+      sharpBootstrapCtx = commStateNet;
+      struct sharp_coll_comm_init_spec comm_spec;
+      comm_spec.rank      = main_comm->netRank;
+      comm_spec.size      = main_comm->netSize;
+      uint32_t *gwr = NULL;
+#if SHARP_API > SHARP_VERSION(1,4)
+      gwr = (uint32_t*)malloc(nranks*sizeof(uint32_t));
+      gwr[rank] = main_comm->rank;
+      NCCLCHECK(bootstrapAllGather(commStateNet, gwr, sizeof(uint32_t)));
+      comm_spec.group_world_ranks = gwr;
+#endif
+      comm_spec.is_comm_world = 0;
+      comm_spec.oob_ctx   = commStateNet;
+      int ret = sharp_coll_comm_init(main_comm->sharpCtx, &comm_spec, (struct sharp_coll_comm **)&ring->sharpComm);
+      ring->sharpCtx = main_comm->sharpCtx;
+      if (gwr) free(gwr);
+      if (ret < 0) {
+          fprintf(stderr, "sharp group create failed:%s(%d)\n", sharp_coll_strerror(ret), ret);
+          return ncclInternalError;
+      } else {
+          fprintf(stderr, "SHARP GROUP CREATE SUCCESS, %p\n", comm->sharpComm);
+      }
+      #endif
+    }
   }
   free(rings);
   free(allInfo);
@@ -596,6 +663,36 @@ if (flags == NCCL_COMM_INIT_MAIN) {
                   break;
               }
           }
+      }
+      fprintf(stderr, "rank %d noderank %d netrank %d\n", comm->rank, comm->nodeRank, comm->netRank);
+
+      {
+      sharpBootstrapCtx = commState;
+      struct sharp_coll_init_spec init_spec = {0};
+      init_spec.job_id = 0xdeadbeef;
+      init_spec.hostlist = NULL;
+      init_spec.world_rank = rank;
+      init_spec.world_size = nranks;
+#if SHARP_API > SHARP_VERSION(1,4)
+      init_spec.world_local_rank = comm->nodeRank;
+      init_spec.enable_thread_support = 0;
+#endif
+      init_spec.group_channel_idx = 0; //TODO support Yaniv's sharp comm layout
+      init_spec.oob_colls.barrier = oob_barrier;
+      init_spec.oob_colls.bcast = oob_bcast;
+      init_spec.oob_colls.gather = oob_gather;
+      init_spec.config = sharp_coll_default_config;
+      init_spec.config.user_progress_num_polls = 10;
+
+      char *dev = getenv("NCCL_SHARP_DEV");
+      init_spec.config.ib_dev_list = dev ? dev : "mlx5_0:1";
+
+      if (sharp_coll_init(&init_spec, &comm->sharpCtx) < 0) {
+          fprintf(stderr, "SHARP COLL INIT ERROR\n");
+          return ncclInternalError;
+      } else {
+          fprintf(stderr, "SHARP INIT SUCCESS, %p\n", comm->sharpCtx);
+      }
       }
  }
   // Barrier
@@ -699,6 +796,7 @@ ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId comm
           ncclUniqueId  netUid = (uids + 2 + 2*main_comm->netLeaderRank)[1];
            fprintf(stderr, "NET UID RST: %" PRIx64 ":%" PRIx64 "\n", ((uint64_t*)&netUid)[0], ((uint64_t*)&netUid)[1]);
            fprintf(stderr, "NODE UID RST: %" PRIx64 ":%" PRIx64 "\n", ((uint64_t*)&nodeUid)[0], ((uint64_t*)&nodeUid)[1]);
+	   main_comm->netID = netUid;
           NCCLCHECK(ncclCommInitRankSync(&main_comm->nodeComm, main_comm->nodeSize, nodeUid, main_comm->nodeRank, NCCL_COMM_INIT_NODE, main_comm));
 	  //          NCCLCHECK(ncclCommInitRankSync(&main_comm->netComm,  main_comm->netSize,  netUid,  main_comm->netRank,  NCCL_COMM_INIT_NET, main_comm));
            fprintf(stderr, "NODE COMM %p, NET_COMM %p\n", main_comm->nodeComm, main_comm->netComm);
@@ -770,7 +868,7 @@ static ncclResult_t initTransportsAll(struct ncclComm** comms, const int* devs, 
     int* ringRanks = rings+r*nranks;
     for (int rank=0; rank<nranks; rank++) {
       CUDACHECK(cudaSetDevice(devs[rank]));
-      NCCLCHECK(setupRing(comms[rank], r, rank, nranks, ringRanks, allInfo, connect+2*rank, flags));
+      NCCLCHECK(setupRing(comms[rank], r, rank, nranks, ringRanks, allInfo, connect+2*rank, flags, NULL));
     }
     // RingExchange connect information
     for (int rank=0; rank<nranks; rank++) {
@@ -784,7 +882,6 @@ static ncclResult_t initTransportsAll(struct ncclComm** comms, const int* devs, 
     for (int rank=0; rank<nranks; rank++) {
       CUDACHECK(cudaSetDevice(devs[rank]));
       struct ncclRing *ring = comms[rank]->rings+r;
-      cudaMallocManaged(&(ring->tempBuff), 1000 * sizeof(float));
       NCCLCHECK(ring->send.transport->send.connect(connect+2*rank+1, &ring->send));
       NCCLCHECK(ring->recv.transport->recv.connect(connect+2*rank+0, &ring->recv));
     }

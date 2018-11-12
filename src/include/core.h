@@ -18,6 +18,9 @@
 #include <stdlib.h>
 #include <cuda_runtime.h>
 #include <mpi.h>
+#include "sharp/api/version.h"
+#include "sharp/api/sharp_coll.h"
+
 #if __CUDACC_VER_MAJOR__ < 9
 struct cudaLaunchParams {
   void *func;
@@ -144,7 +147,6 @@ struct ncclRing {
       struct ncclConnector send;
       struct ncclConnector recv;
       struct ncclConnector sharp;
-      void *tempBuff;
       // Maps an internal nccl index to user-specified rank order. This is necessary
       // since we need to know how the user expects data to be ordered across
       // devices. Ordered from current device.
@@ -157,7 +159,8 @@ struct ncclRing {
       int collCount;
       int collFifoHead; // Only used by GPU
       int collFifoTail; // Only used by CPU
-      int sharpNodeRank;
+      int mpiColor;
+      int sharpCommRank;
       int sharpCommSize;
       MPI_Comm mpiNodeComm;
       
@@ -254,14 +257,19 @@ struct ncclComm {
   int* intraCC; // Only to check all have the same ComputeCap and disable CGMode if not
   struct ncclColl args;
   void* argsptr;
-  int nodeRank;
-  int nodeSize;
-  int netRank;
-  int netSize;
+  int nodeRank; //rank in node communcator
+  int nodeSize; //number of ranks in node communicator
+  int netRank;  //rank in net communicator
+  int netSize;  //number of ranks in net communicator
   int netLeaderRank;
   int nodeLeaderRank;
+
   struct ncclComm *nodeComm;
   struct ncclComm *netComm;
+  struct sharp_coll_context *sharpCtx;
+  struct sharp_coll_comm *sharpComm;
+
+  ncclUniqueId netID;
 };
 
 // Check CUDA calls
