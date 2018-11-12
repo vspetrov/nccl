@@ -265,12 +265,16 @@ static ncclResult_t setupRing(struct ncclComm* comm, int ringid, int rank, int n
   int next = ring->userRanks[1];
 
   NCCLCHECK(selectTransport<0>(allInfo+rank, allInfo+prev, connect+0, &ring->recv.transport, ring));
-  NCCLCHECK(selectTransport<1>(allInfo+rank, allInfo+next, connect+1, &ring->send.transport, ring)); 
-  NCCLCHECK(selectTransport<2>(allInfo+rank, allInfo+next, connect+1, &ring->sharp.transport, ring));
+  NCCLCHECK(selectTransport<1>(allInfo+rank, allInfo+next, connect+1, &ring->send.transport, ring));
+  if (flag == NCCL_COMM_INIT_NODE){
+    ring->sharpNodeRank = comm->nodeRank;
+    ring->sharpCommSize = comm->nodeSize;
+    NCCLCHECK(selectTransport<2>(allInfo+rank, allInfo+next, connect+1, &ring->sharp.transport, ring));
+    NCCLCHECK(transportCreateProxy(2, ring, comm));
+  }
   NCCLCHECK(transportCreateProxy(0, ring, comm));
   NCCLCHECK(transportCreateProxy(1, ring, comm));
-  if (flag != NCCL_COMM_INIT_MAIN)
-    NCCLCHECK(transportCreateProxy(2, ring, comm));
+
   return ncclSuccess;
 }
 static ncclResult_t fillConnect(struct ncclInfo* allInfo, int nranks, int rank, int* connectTransport, ncclTvalue_t* connectValue) {
@@ -519,7 +523,8 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, ncclUniqueId* comm
     NCCLCHECK(setupRing(comm, r, rank, nranks, ringRanks, allInfo, connect,flags));
     NCCLCHECK(bootstrapRingExchange(commState, connect, ring->userRanks[nranks-1], ring->userRanks[1], sizeof(struct ncclConnect)));
     NCCLCHECK(ring->send.transport->send.connect(connect+1, &ring->send));
-    NCCLCHECK(ring->recv.transport->recv.connect(connect+0, &ring->recv)); 
+    NCCLCHECK(ring->recv.transport->recv.connect(connect+0, &ring->recv));
+    if (flags == NCCL_COMM_INIT_NODE)
     NCCLCHECK(ring->sharp.transport->send.connect(connect+0, &ring->sharp)); 
   }
   free(rings);
@@ -624,6 +629,8 @@ ncclResult_t ncclCommInitRankSync(ncclComm_t* newcomm, int ndev, ncclUniqueId co
   ncclResult_t res;
 
   NCCLCHECKGOTO(commAlloc(newcomm, ndev, myrank), res, cleanup);
+  if (main_comm)
+    (*newcomm)->nodeRank = main_comm->nodeRank;
   NCCLCHECKGOTO(initTransportsRank(*newcomm, &commId, flag, main_comm), res, cleanup);
   NCCLCHECKGOTO(devCommSetup(*newcomm), res, cleanup);
 

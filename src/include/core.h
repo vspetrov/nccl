@@ -17,7 +17,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <cuda_runtime.h>
-
+#include <mpi.h>
 #if __CUDACC_VER_MAJOR__ < 9
 struct cudaLaunchParams {
   void *func;
@@ -150,7 +150,6 @@ struct ncclRing {
       // devices. Ordered from current device.
       int* userRanks;
       int* devUserRanks;
-
       // Operation list for aggregation
       struct ncclColl* collectives;
       struct ncclColl* devCollectives;
@@ -158,6 +157,12 @@ struct ncclRing {
       int collCount;
       int collFifoHead; // Only used by GPU
       int collFifoTail; // Only used by CPU
+      int sharpNodeRank;
+      int sharpCommSize;
+      MPI_Comm mpiNodeComm;
+      
+      struct sharp_coll_context *sharpCtx;
+      struct sharp_coll_comm *sharpComm;
     };
     int data[0x80];
   };

@@ -158,6 +158,10 @@ void* persistentThread(void *opaqueInfo) {
       return NULL;
     }
     ncclResult_t res = info->func(&args);
+    if (info->func == sharpTransport.send.proxy) {
+      return NULL;
+    }    
+   
     if (res != ncclSuccess) {
       WARN("%s:%d -> %d [Proxy thread error]", __FILE__, __LINE__, res);
     }
@@ -169,7 +173,7 @@ ncclResult_t transportCreateProxy(int type, struct ncclRing* ring, struct ncclCo
   threadFunc_t proxyfunc = (threadFunc_t) ((type == RECV) ? connector->transport->recv.proxy : connector->transport->send.proxy);
   if (type == 2) {
     connector = &ring->sharp;
-    proxyfunc = (threadFunc_t) connector->transport->recv.proxy;
+    proxyfunc = (threadFunc_t) connector->transport->send.proxy;
   }
   if (proxyfunc) {
     TRACE(NET,"type %d ring %p proxyfunc %p comm %p", type, ring, proxyfunc, comm);
