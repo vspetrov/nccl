@@ -133,6 +133,17 @@ struct ncclRecvMem {
   char buff[1]; // Actually larger than that
 };
 
+struct ncclSharpContext{
+  void* commStateNet;
+  struct sharp_coll_context *sharpCtx;
+  struct sharp_coll_comm *sharpComm;
+  int sharpCommRank;
+  int sharpCommSize;
+  int globalRank;
+  int localRank;
+  int nComms;
+};
+
 struct ncclRing {
   union {
     struct {
@@ -160,12 +171,9 @@ struct ncclRing {
       int collFifoHead; // Only used by GPU
       int collFifoTail; // Only used by CPU
       int mpiColor;
-      int sharpCommRank;
-      int sharpCommSize;
       MPI_Comm mpiNodeComm;
-      
-      struct sharp_coll_context *sharpCtx;
-      struct sharp_coll_comm *sharpComm;
+
+      struct ncclSharpContext *sharpSettings;
     };
     int data[0x80];
   };
@@ -268,6 +276,7 @@ struct ncclComm {
   struct ncclComm *netComm;
   struct sharp_coll_context *sharpCtx;
   struct sharp_coll_comm *sharpComm;
+  struct ncclSharpContext sharpSettings;
 
   ncclUniqueId netID;
 };

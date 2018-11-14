@@ -25,6 +25,7 @@ struct sharpSendResources {
   struct ncclRecvMem* devNetMem;
   uint64_t llStep;
   uint64_t llLastCleaning;
+  struct ncclSharpContext *sharpSettings;
 };
 
 struct sharpRecvResources {
@@ -45,16 +46,6 @@ ncclResult_t sharpSetup(ncclTinfo_t* myOpaqueInfo, ncclTinfo_t* peerOpaqueInfo, 
   struct sharpSendResources* resources;
   NCCLCHECK(ncclCalloc(&resources, 1));
   ring->sharp.transportResources = resources;
-
-  fprintf(stderr,"Sharp setup\n");
-  #if 0
-  struct netInfo* myInfo = (struct netInfo*)myOpaqueInfo;
-  resources->netDev = getDev(ring->id, myInfo->ndev, myInfo->scores);
-  resources->cudaSupport = false;
-#endif
-
-  int cudaDev;
-  CUDACHECK(cudaGetDevice(&cudaDev));
   resources->cudaSupport = true;
 
   int size = offsetof(struct ncclRecvMem, buff)+ring->buffSize;
@@ -64,9 +55,9 @@ ncclResult_t sharpSetup(ncclTinfo_t* myOpaqueInfo, ncclTinfo_t* peerOpaqueInfo, 
 
   NCCLCHECK(ncclCudaHostAlloc((void**)&resources->hostRecvMem, (void**)&resources->devHostRecvMem, size));
   NCCLCHECK(ncclCudaHostAlloc((void**)&resources->hostSendMem, (void**)&resources->devHostSendMem, size));
+  resources->sharpSettings = ring->sharpSettings;
   MPI_Comm_split(MPI_COMM_WORLD, ring->mpiColor, ring->mpiColor, &(ring->mpiNodeComm));
-
-   return ncclSuccess;
+  return ncclSuccess;
 }
 
 
@@ -88,15 +79,14 @@ ncclResult_t sharpProxy(struct ncclProxyArgs* args) {
     ;;
   }
   int rank, lrank;
+  int offset, count;
+  offset = sizesFifo[0];
+  count  = sizesFifo[1];
+  
+#if 0
+#if 1
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_rank(ring->mpiNodeComm, &lrank);
-  int offset, sizeReduce;
-  offset = sizesFifo[0];
-  //sizeReduce = sizesFifo[1];
-  sizeReduce = 8;
-
-  #if 0
-  #if 1
   for(int k = 0; k<4;k++){
     if (rank == k){
       fprintf(stderr, "before allreduce Thread - gRank %d lrank %d: ", rank, lrank);
@@ -106,16 +96,14 @@ ncclResult_t sharpProxy(struct ncclProxyArgs* args) {
     }
     //     MPI_Barrier(MPI_COMM_WORLD);
   }
-  #endif
-  //  if (rank == 0)
-  fprintf(stderr, "grank %d lrank %d: Offset = %d size = %d\n", rank, lrank, offset, sizeReduce);
+#endif
+  fprintf(stderr, "grank %d lrank %d: Offset = %d size = %d\n", rank, lrank, offset, count);
   MPI_Barrier(MPI_COMM_WORLD);
-  //  volatile float* redBuf = (float*)ring->recv.conn.buff;
   float *redBuf = (float*)ring->recv.conn.buff;
-  MPI_Allreduce(MPI_IN_PLACE, (float*)redBuf+offset, sizeReduce, MPI_FLOAT, MPI_SUM, ring->mpiNodeComm);
-  //  MPI_Barrier(MPI_COMM_WORLD);
+  MPI_Allreduce(MPI_IN_PLACE, (float*)redBuf+offset, count, MPI_FLOAT, MPI_SUM, ring->mpiNodeComm);
+  MPI_Barrier(MPI_COMM_WORLD);
   __sync_synchronize();
-  #if 0
+#if 0
   for(int k = 0; k<4;k++){
     if (rank == k){
       fprintf(stderr, "after allreduce Thread - grank %d lrank %d: ", rank, lrank);
@@ -125,45 +113,43 @@ ncclResult_t sharpProxy(struct ncclProxyArgs* args) {
     }
     //  MPI_Barrier(MPI_COMM_WORLD);
   }
-  #endif
+#endif
 #endif // for MPI allreduce
 
-  float *redBuf = (float*)ring->recv.conn.buff + offset;
-  int count = sizeReduce;
-  struct sharp_coll_reduce_spec reduce_spec;
-  enum sharp_datatype sharp_type;
-  enum sharp_reduce_op op_type;
-  size_t dt_size;
-  sharp_type = SHARP_DTYPE_FLOAT;
-  op_type = SHARP_OP_SUM;
+  if (count != 0){
+    float *redBuf = (float*)ring->recv.conn.buff + offset;
+    struct sharp_coll_reduce_spec reduce_spec;
+    enum sharp_datatype sharp_type;
+    enum sharp_reduce_op op_type;
+    size_t dt_size;
+    sharp_type = SHARP_DTYPE_FLOAT;
+    op_type = SHARP_OP_SUM;
 
-  dt_size = sizeof(float);
-  reduce_spec.sbuf_desc.buffer.ptr = redBuf;
-  void *mr = NULL;
-  if (SHARP_COLL_SUCCESS != sharp_coll_reg_mr(ring->sharpCtx, redBuf, count* dt_size, &mr)) {
-    fprintf(stderr, "SHARP REG MR FAILED\n");
-  }
-  reduce_spec.sbuf_desc.buffer.length = count * dt_size;
-  reduce_spec.sbuf_desc.buffer.mem_handle = mr;
-  reduce_spec.sbuf_desc.type = SHARP_DATA_BUFFER;
-  reduce_spec.rbuf_desc.buffer.ptr = redBuf;
-  reduce_spec.rbuf_desc.buffer.length = count * dt_size;
-  reduce_spec.rbuf_desc.buffer.mem_handle = mr;
-  reduce_spec.rbuf_desc.type = SHARP_DATA_BUFFER;
-  reduce_spec.sbuf_desc.mem_type = SHARP_MEM_TYPE_CUDA;
-  reduce_spec.rbuf_desc.mem_type = SHARP_MEM_TYPE_CUDA;
-  reduce_spec.length = count;
-  reduce_spec.dtype = sharp_type;
-  reduce_spec.op = op_type;
+    dt_size = sizeof(float);
+    reduce_spec.sbuf_desc.buffer.ptr = redBuf;
+    void *mr = NULL;
+    if (SHARP_COLL_SUCCESS != sharp_coll_reg_mr(resources->sharpSettings->sharpCtx, redBuf, count* dt_size, &mr)) {
+      fprintf(stderr, "SHARP REG MR FAILED\n");
+    }
+    reduce_spec.sbuf_desc.buffer.length = count * dt_size;
+    reduce_spec.sbuf_desc.buffer.mem_handle = mr;
+    reduce_spec.sbuf_desc.type = SHARP_DATA_BUFFER;
+    reduce_spec.rbuf_desc.buffer.ptr = redBuf;
+    reduce_spec.rbuf_desc.buffer.length = count * dt_size;
+    reduce_spec.rbuf_desc.buffer.mem_handle = mr;
+    reduce_spec.rbuf_desc.type = SHARP_DATA_BUFFER;
+    reduce_spec.sbuf_desc.mem_type = SHARP_MEM_TYPE_CUDA;
+    reduce_spec.rbuf_desc.mem_type = SHARP_MEM_TYPE_CUDA;
+    reduce_spec.length = count;
+    reduce_spec.dtype = sharp_type;
+    reduce_spec.op = op_type;
 
-  if (SHARP_COLL_SUCCESS != sharp_coll_do_allreduce(ring->sharpComm, &reduce_spec)) {
-    fprintf(stderr, "SHARP ALLREDUCE FAILED\n");
-  }
-  else{
-    fprintf(stderr, "WOW! sharp was success\n");
-  }
-  if (SHARP_COLL_SUCCESS != sharp_coll_dereg_mr(ring->sharpCtx, mr)) {
-    fprintf(stderr, "SHARP DEREG MR FAILED\n");
+    if (SHARP_COLL_SUCCESS != sharp_coll_do_allreduce(resources->sharpSettings->sharpComm, &reduce_spec)) {
+      fprintf(stderr, "SHARP ALLREDUCE FAILED\n");
+    }
+     if (SHARP_COLL_SUCCESS != sharp_coll_dereg_mr(resources->sharpSettings->sharpCtx, mr)) {
+      fprintf(stderr, "SHARP DEREG MR FAILED\n");
+    }
   }
   __sync_synchronize();
   MPI_Barrier(MPI_COMM_WORLD);
@@ -171,10 +157,34 @@ ncclResult_t sharpProxy(struct ncclProxyArgs* args) {
   return ncclSuccess;
 }
 
+extern void* sharpBootstrapCtx;
 ncclResult_t sharpConnect(struct ncclConnect* connectInfo, struct ncclConnector* send) {
   // Setup device pointers
   struct sharpSendResources* resources = (struct sharpSendResources*)send->transportResources;
-
+  fprintf(stderr,"CREATING SHARP COMM\n");
+  sharpBootstrapCtx = resources->sharpSettings->commStateNet;
+  struct sharp_coll_comm_init_spec comm_spec;
+  comm_spec.rank      = resources->sharpSettings->sharpCommRank;
+  comm_spec.size      = resources->sharpSettings->sharpCommSize;
+  uint32_t *gwr = NULL;
+#if SHARP_API > SHARP_VERSION(1,4)
+  gwr = (uint32_t*)malloc(resources->sharpSettings->nComms*sizeof(uint32_t));
+  gwr[resources->sharpSettings->localRank] = resources->sharpSettings->globalRank;
+  NCCLCHECK(bootstrapAllGather(resources->sharpSettings->commStateNet, gwr, sizeof(uint32_t)));
+  comm_spec.group_world_ranks = gwr;
+#endif
+  comm_spec.is_comm_world = 0;
+  comm_spec.oob_ctx   = resources->sharpSettings->commStateNet;
+  int ret = sharp_coll_comm_init(resources->sharpSettings->sharpCtx, &comm_spec, (struct sharp_coll_comm **)&resources->sharpSettings->sharpComm);
+  //->sharpCtx = main_comm->sharpSettings.sharpCtx;
+  if (gwr) free(gwr);
+  if (ret < 0) {
+    WARN("Sharp group create failed: %s(%d)", sharp_coll_strerror(ret), ret);
+    return ncclInternalError;
+  } else {
+    fprintf(stderr, "SHARP GROUP CREATE SUCCESS\n");
+  }
+  
   if (resources->cudaSupport) {
     send->conn.buff = resources->devNetMem->buff;
     // We don't use devMem for llMode because the CPU has to read the data

@@ -176,7 +176,7 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
       
       int reduceSize = max(0, min(sliceSize, maxOffset));
       postSharp.postSize(0, poffset);
-      //     postSharp.postSize(1, reduceSize); 
+      postSharp.postSize(1, reduceSize); 
     }
     
     __threadfence_system();

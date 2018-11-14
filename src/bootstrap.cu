@@ -59,6 +59,12 @@ struct extInfo {
   ncclNetHandle_t extHandle;
 };
 
+struct extState {
+  void* extRecvComm;
+  void* extSendComm;
+  int rank;
+  int nranks;
+};
 enum {
   BOOTSTRAP_ALLGATHER = 1,
   BOOTSTRAP_RINGEXCHANGE,
@@ -285,7 +291,6 @@ ncclResult_t bootstrapClose(void* commState) {
   return ncclSuccess;
 }
 
-#if 0
 void* sharpBootstrapCtx = NULL;
 
 int oob_barrier(void *ctx) {
@@ -323,4 +328,3 @@ int oob_bcast(void *ctx, void *buf, int size, int root) {
     free(tmp);
     return 0;
 }
-#endif

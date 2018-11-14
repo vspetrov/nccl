@@ -9,19 +9,14 @@
 
 #include "nccl.h"
 
-//extern void* sharpBootstrapCtx;
-
-struct extState {
-  void* extRecvComm;
-  void* extSendComm;
-  int rank;
-  int nranks;
-};
-
 ncclResult_t bootstrapCreateRoot(ncclUniqueId* commId, bool idFromEnv);
 ncclResult_t bootstrapGetUniqueId(ncclUniqueId* out);
 ncclResult_t bootstrapInit(ncclUniqueId* id, int rank, int nranks, void** commState);
 ncclResult_t bootstrapAllGather(void* commState, void* allData, int size);
 ncclResult_t bootstrapRingExchange(void* commState, void* prevNextData, int prev, int next, int size);
 ncclResult_t bootstrapClose(void* commState);
+
+int oob_barrier(void *ctx);
+int oob_gather(void *ctx, int root, void *sbuf, void *rbuf, int size);
+int oob_bcast(void *ctx, void *buf, int size, int root);
 #endif

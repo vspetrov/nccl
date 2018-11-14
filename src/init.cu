@@ -228,8 +228,7 @@ static ncclResult_t selectTransport(struct ncclInfo* myInfo, struct ncclInfo* pe
       transportComm = &transport->send;
       break;
     case 2:
-      //transportComm = &sharpTransport
-      fprintf(stderr, "select sharp transport for ring\n");
+      //TODO do sharp setup as others transports. connect is null for sharp 
       NCCLCHECK(sharpTransport.send.setup(myInfo->tinfo+t, peerInfo->tinfo+t, connect, ring));
       *transportRet = &sharpTransport;
       return ncclSuccess;
@@ -268,8 +267,8 @@ static ncclResult_t setupRing(struct ncclComm* comm, int ringid, int rank, int n
   NCCLCHECK(selectTransport<1>(allInfo+rank, allInfo+next, connect+1, &ring->send.transport, ring));
   if (flag == NCCL_COMM_INIT_NODE){
     ring->mpiColor = comm->nodeRank;
-    ring->sharpCommRank = main_comm->netRank;
-    ring->sharpCommSize = comm->nodeSize;
+    ring->sharpSettings = &main_comm->sharpSettings;
+    NCCLCHECK(bootstrapInit(&(main_comm->netID), main_comm->netRank, main_comm->netSize, &main_comm->sharpSettings.commStateNet));
     NCCLCHECK(selectTransport<2>(allInfo+rank, allInfo+next, connect+1, &ring->sharp.transport, ring));
     NCCLCHECK(transportCreateProxy(2, ring, comm));
   }
@@ -449,43 +448,7 @@ int unique (uint64_t* first, uint64_t* last) {
     return (++result - begin);
 }
 
-static void* sharpBootstrapCtx = NULL;
-int oob_barrier(void *ctx) {
-    struct extState *st = (struct extState*)sharpBootstrapCtx;
-    int nranks = st->nranks;
-    void *tmp = malloc(nranks);
-    bootstrapAllGather(st, tmp, 1);
-    free(tmp);
-    return 0;
-}
-
-int oob_gather(void *ctx, int root, void *sbuf, void *rbuf, int size) {
-    struct extState *st = (struct extState*)sharpBootstrapCtx;
-    int nranks = st->nranks;
-    void *tmp = malloc(nranks*size);
-    memcpy((void*)((ptrdiff_t)tmp + size*st->rank), sbuf, size);
-    bootstrapAllGather(st, tmp, size);
-    if (st->rank == root) {
-        memcpy(rbuf, tmp, nranks*size);
-    }
-    free(tmp);
-    return 0;
-}
-
-int oob_bcast(void *ctx, void *buf, int size, int root) {
-    struct extState* state = (struct extState*)sharpBootstrapCtx;
-    void *tmp = malloc(size*state->nranks);
-    if (state->rank == root) {
-        memcpy((void*)((ptrdiff_t)tmp+size*state->rank), buf, size);
-    }
-    bootstrapAllGather(state, tmp, size);
-    if (state->rank != root) {
-        memcpy(buf, (void*)((ptrdiff_t)tmp+size*root), size);
-    }
-    free(tmp);
-    return 0;
-}
-
+extern void* sharpBootstrapCtx;
 static ncclResult_t initTransportsRank(struct ncclComm* comm, ncclUniqueId* commId,  int flags, ncclComm_t main_comm) {
   int rank = comm->rank;
   int nranks = comm->nRanks;
@@ -563,35 +526,14 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, ncclUniqueId* comm
     NCCLCHECK(ring->send.transport->send.connect(connect+1, &ring->send));
     NCCLCHECK(ring->recv.transport->recv.connect(connect+0, &ring->recv));
     if (flags == NCCL_COMM_INIT_NODE){
-        NCCLCHECK(ring->sharp.transport->send.connect(connect+0, &ring->sharp));
-#if 1
-        fprintf(stderr,"CREATING SHARP COMM\n");
-         /* Initialize sharp communicator */
-      void* commStateNet;
-      NCCLCHECK(bootstrapInit(&(main_comm->netID), main_comm->netRank, main_comm->netSize, &commStateNet));
-      sharpBootstrapCtx = commStateNet;
-      struct sharp_coll_comm_init_spec comm_spec;
-      comm_spec.rank      = main_comm->netRank;
-      comm_spec.size      = main_comm->netSize;
-      uint32_t *gwr = NULL;
-#if SHARP_API > SHARP_VERSION(1,4)
-      gwr = (uint32_t*)malloc(nranks*sizeof(uint32_t));
-      gwr[rank] = main_comm->rank;
-      NCCLCHECK(bootstrapAllGather(commStateNet, gwr, sizeof(uint32_t)));
-      comm_spec.group_world_ranks = gwr;
-#endif
-      comm_spec.is_comm_world = 0;
-      comm_spec.oob_ctx   = commStateNet;
-      int ret = sharp_coll_comm_init(main_comm->sharpCtx, &comm_spec, (struct sharp_coll_comm **)&ring->sharpComm);
-      ring->sharpCtx = main_comm->sharpCtx;
-      if (gwr) free(gwr);
-      if (ret < 0) {
-          fprintf(stderr, "sharp group create failed:%s(%d)\n", sharp_coll_strerror(ret), ret);
-          return ncclInternalError;
-      } else {
-          fprintf(stderr, "SHARP GROUP CREATE SUCCESS, %p\n", comm->sharpComm);
-      }
-      #endif
+      //TODO connect should be null
+      // ring->sharpSettings = &main_comm->sharpSettings;
+      main_comm->sharpSettings.sharpCommRank = main_comm->netRank;
+      main_comm->sharpSettings.sharpCommSize = main_comm->netSize;
+      main_comm->sharpSettings.globalRank = main_comm->rank;
+      main_comm->sharpSettings.localRank = rank;
+      main_comm->sharpSettings.nComms = nranks;
+      NCCLCHECK(ring->sharp.transport->send.connect(connect+0, &ring->sharp));
     }
   }
   free(rings);
@@ -667,32 +609,32 @@ if (flags == NCCL_COMM_INIT_MAIN) {
       fprintf(stderr, "rank %d noderank %d netrank %d\n", comm->rank, comm->nodeRank, comm->netRank);
 
       {
-      sharpBootstrapCtx = commState;
-      struct sharp_coll_init_spec init_spec = {0};
-      init_spec.job_id = 0xdeadbeef;
-      init_spec.hostlist = NULL;
-      init_spec.world_rank = rank;
-      init_spec.world_size = nranks;
+	sharpBootstrapCtx = commState;
+	struct sharp_coll_init_spec init_spec = {0};
+	init_spec.job_id = 0xdeadbeaf;
+	init_spec.hostlist = NULL;
+	init_spec.world_rank = rank;
+	init_spec.world_size = nranks;
 #if SHARP_API > SHARP_VERSION(1,4)
-      init_spec.world_local_rank = comm->nodeRank;
-      init_spec.enable_thread_support = 0;
+	init_spec.world_local_rank = comm->nodeRank;
+	init_spec.enable_thread_support = 0;
 #endif
-      init_spec.group_channel_idx = 0; //TODO support Yaniv's sharp comm layout
-      init_spec.oob_colls.barrier = oob_barrier;
-      init_spec.oob_colls.bcast = oob_bcast;
-      init_spec.oob_colls.gather = oob_gather;
-      init_spec.config = sharp_coll_default_config;
-      init_spec.config.user_progress_num_polls = 10;
+	init_spec.group_channel_idx = 0; //TODO support Yaniv's sharp comm layout
+	init_spec.oob_colls.barrier = oob_barrier;
+	init_spec.oob_colls.bcast = oob_bcast;
+	init_spec.oob_colls.gather = oob_gather;
+	init_spec.config = sharp_coll_default_config;
+	init_spec.config.user_progress_num_polls = 10;
 
-      char *dev = getenv("NCCL_SHARP_DEV");
-      init_spec.config.ib_dev_list = dev ? dev : "mlx5_0:1";
+	char *dev = getenv("NCCL_SHARP_DEV");
+	init_spec.config.ib_dev_list = dev ? dev : "mlx5_0:1";
 
-      if (sharp_coll_init(&init_spec, &comm->sharpCtx) < 0) {
-          fprintf(stderr, "SHARP COLL INIT ERROR\n");
+	if (sharp_coll_init(&init_spec, &comm->sharpSettings.sharpCtx) < 0) {	  
+          WARN("Sharp coll init error");
           return ncclInternalError;
-      } else {
-          fprintf(stderr, "SHARP INIT SUCCESS, %p\n", comm->sharpCtx);
-      }
+	} else {
+          fprintf(stderr, "SHARP INIT SUCCESS, %p\n", comm->sharpSettings.sharpCtx);
+	}
       }
  }
   // Barrier
