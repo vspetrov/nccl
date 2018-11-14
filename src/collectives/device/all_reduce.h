@@ -69,8 +69,6 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
   T * __restrict__ prevInput = (T*)ring->recv.conn.buff;
   T * __restrict__ nextOutput = (T*)ring->send.conn.buff;
 
-  if (!tid)
-  printf("BID = %d\n", bid);
   for (ssize_t gridOffset = 0; gridOffset < size; gridOffset += nranks*loopSize) {
     int chunkSize = min(sliceSize, DIVUP(size-gridOffset,nranks*args->nRings));
     ALIGN_SIZE(chunkSize, nthreads*sizeof(uint64_t)/sizeof(T));
@@ -118,23 +116,10 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
     // result that we store in this data and push to the next GPU
     slice = ring->devUserRanks[0];
     offset = chunkOffset + slice * chunkSize;
-
     maxOffset = min(chunkSize, size-offset);
     
 #if 1
     //my reduce
-#if 0 //part work
-    Prims::Reduce(tid, nthreads,
-          prevInput  + poffset,
-          thisInput  + offset,
-    //	  nextdirect ? (sharedNextOutput + offset) : (nextOutput + noffset),
-		  nextOutput + noffset,
-          sliceSize, maxOffset,
-          step,
-          waitDoneFromNext, waitReadyFromPrev,
-          postReadyToNext, postDoneToPrev);
-#endif
-#if 1 //new
     Prims::Reduce(tid, nthreads,
           prevInput  + poffset,
           thisInput  + offset,
@@ -144,9 +129,7 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
           step,
           waitDoneFromNext, waitReadyFromPrev,
           postReadyToNext, postDoneToPrev);
-#endif
 
-    
     Prims::Copy(tid, nthreads,
           NULL,
           NULL,
@@ -156,6 +139,7 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
 		postReadyToNext, postDoneToPrev);
 #endif
 #if 0
+    //nccl reduce
     Prims::ReduceCopy(tid, nthreads,
         prevInput  + poffset,
         thisInput  + offset,
@@ -169,11 +153,6 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
 #endif
     __syncthreads();
     if (0 == tid){
-
-      //      int slice = ring->devUserRanks[nranks-1];
-      //      int offset = chunkOffset + slice * chunkSize;
-      //      int maxOffset = min(chunkSize, size-offset);
-      
       int reduceSize = max(0, min(sliceSize, maxOffset));
       postSharp.postSize(0, poffset);
       postSharp.postSize(1, reduceSize); 
@@ -186,19 +165,15 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
    __syncthreads();
    __threadfence_system();
 #if 1
-   #if 0
+   //is it enough to sync buffers after sharp allreduce?
+   step++;
    Prims::Copy(tid, nthreads,
-	       	       (nextOutput + noffset),
-	       //(prevInput + noffset),
-        thisOutput + offset,
-        sliceSize, maxOffset,
-        step,
-        waitDoneFromNext,
-        postReadyToNext);
-
-    NEXT_STEP;
-#endif
-
+          NULL,
+          NULL,
+          0, 0,
+          step,
+          waitReadyFromPrev,
+          postDoneToPrev);
 
    Prims::DoubleCopy(tid, nthreads,
             prevInput + poffset,
@@ -210,28 +185,7 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
             postReadyToNext, postDoneToPrev);
      __syncthreads();
    __threadfence_system();
-#if 0
-    Prims::Copy(tid, nthreads,
-	       	       (prevInput + poffset),
-	       //(prevInput + noffset),
-        thisOutput + offset,
-        sliceSize, maxOffset,
-        step,
-        waitDoneFromNext,
-        postReadyToNext);
-
-   step++;
-   Prims::Copy(tid, nthreads,
-	       	       (prevInput + poffset),
-	       //(prevInput + noffset),
-        nextOutput + noffset,
-        sliceSize, maxOffset,
-        step,
-        waitDoneFromNext,
-        postReadyToNext);
-#endif
     NEXT_STEP;
-
 #endif
     // k-2 steps: copy to next GPU
     if (prevdirect) {

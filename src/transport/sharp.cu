@@ -129,7 +129,8 @@ ncclResult_t sharpProxy(struct ncclProxyArgs* args) {
     reduce_spec.sbuf_desc.buffer.ptr = redBuf;
     void *mr = NULL;
     if (SHARP_COLL_SUCCESS != sharp_coll_reg_mr(resources->sharpSettings->sharpCtx, redBuf, count* dt_size, &mr)) {
-      fprintf(stderr, "SHARP REG MR FAILED\n");
+      WARN("Sharp reg mr failed");
+      return ncclInternalError;
     }
     reduce_spec.sbuf_desc.buffer.length = count * dt_size;
     reduce_spec.sbuf_desc.buffer.mem_handle = mr;
@@ -145,14 +146,16 @@ ncclResult_t sharpProxy(struct ncclProxyArgs* args) {
     reduce_spec.op = op_type;
 
     if (SHARP_COLL_SUCCESS != sharp_coll_do_allreduce(resources->sharpSettings->sharpComm, &reduce_spec)) {
-      fprintf(stderr, "SHARP ALLREDUCE FAILED\n");
+      WARN("Sharp allreduce failed");
+      return ncclInternalError;
     }
      if (SHARP_COLL_SUCCESS != sharp_coll_dereg_mr(resources->sharpSettings->sharpCtx, mr)) {
-      fprintf(stderr, "SHARP DEREG MR FAILED\n");
+      WARN("Sharp dereg mr failed");
+      return ncclInternalError;
     }
   }
   __sync_synchronize();
-  MPI_Barrier(MPI_COMM_WORLD);
+  
   ++(*prevTail);  
   return ncclSuccess;
 }
