@@ -533,6 +533,8 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, ncclUniqueId* comm
       main_comm->sharpSettings.globalRank = main_comm->rank;
       main_comm->sharpSettings.localRank = rank;
       main_comm->sharpSettings.nComms = nranks;
+      main_comm->sharpSettings.redBuf = ring->recv.conn.buff;
+      main_comm->sharpSettings.redBufSize = ring->buffSize;;
       NCCLCHECK(ring->sharp.transport->send.connect(connect+0, &ring->sharp));
     }
   }
@@ -585,8 +587,10 @@ if (flags == NCCL_COMM_INIT_MAIN) {
       uint64_t *hosts = (uint64_t*)malloc(nranks*sizeof(uint64_t));
       for (int i=0; i<nranks; i++) {
           hosts[i] = rankInfos[i].hostHash;
+#if 0
 	  if (rank==0)
 	    fprintf(stderr,"%" PRIu64 " ", hosts[i]);
+#endif
       }
       qsort(hosts, nranks, sizeof(uint64_t), compare_hosts);
       comm->netSize = unique(hosts, hosts+nranks);
@@ -606,8 +610,9 @@ if (flags == NCCL_COMM_INIT_MAIN) {
               }
           }
       }
+#if 0
       fprintf(stderr, "rank %d noderank %d netrank %d\n", comm->rank, comm->nodeRank, comm->netRank);
-
+#endif
       {
 	sharpBootstrapCtx = commState;
 	struct sharp_coll_init_spec init_spec = {0};
@@ -632,8 +637,6 @@ if (flags == NCCL_COMM_INIT_MAIN) {
 	if (sharp_coll_init(&init_spec, &comm->sharpSettings.sharpCtx) < 0) {	  
           WARN("Sharp coll init error");
           return ncclInternalError;
-	} else {
-          fprintf(stderr, "SHARP INIT SUCCESS, %p\n", comm->sharpSettings.sharpCtx);
 	}
       }
  }
@@ -710,14 +713,10 @@ ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId comm
   } else {
     ncclCommInitRankSync(newcomm, nranks, commId, myrank, NCCL_COMM_INIT_MAIN, NULL);
   }
-   fprintf(stderr,"STARTING CUSTOM\n");
   {
       (*newcomm)->nodeComm = NULL;
       (*newcomm)->netComm  = NULL;
-      //   (*newcomm)->sharpComm  = NULL;
-      fprintf(stderr,"STARTING CUSTOM\n");
       ncclComm_t main_comm = *newcomm;
-      printf("####Main_comm net size: %d\n", main_comm->netSize);
       if (main_comm->netSize > 1) {
           ncclUniqueId *uids;
           cudaStream_t s;
@@ -725,23 +724,23 @@ ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId comm
           CUDACHECK(cudaStreamCreate(&s));
           if (main_comm->nodeSize > 1 && main_comm->rank == main_comm->nodeLeaderRank) {
               NCCLCHECK(ncclGetUniqueId(&uids[0]));
-               fprintf(stderr, "NODE UID: %" PRIx64 ":%" PRIx64 "\n", ((uint64_t*)&uids[0])[0], ((uint64_t*)&uids[0])[1]);
+	      //fprintf(stderr, "NODE UID: %" PRIx64 ":%" PRIx64 "\n", ((uint64_t*)&uids[0])[0], ((uint64_t*)&uids[0])[1]);
           }
           if (main_comm->rank == main_comm->netLeaderRank) {
               NCCLCHECK(ncclGetUniqueId(&uids[1]));
-               fprintf(stderr, "NET UID: %" PRIx64 ":%" PRIx64 "\n", ((uint64_t*)&uids[1])[0], ((uint64_t*)&uids[1])[1]);
+	      //fprintf(stderr, "NET UID: %" PRIx64 ":%" PRIx64 "\n", ((uint64_t*)&uids[1])[0], ((uint64_t*)&uids[1])[1]);
           }
           NCCLCHECK(ncclAllGather(uids, uids+2, 2*sizeof(ncclUniqueId), ncclChar, *newcomm, s));
           CUDACHECK(cudaStreamSynchronize(s));
 
           ncclUniqueId nodeUid = (uids + 2 + 2*main_comm->nodeLeaderRank)[0];
           ncclUniqueId  netUid = (uids + 2 + 2*main_comm->netLeaderRank)[1];
-           fprintf(stderr, "NET UID RST: %" PRIx64 ":%" PRIx64 "\n", ((uint64_t*)&netUid)[0], ((uint64_t*)&netUid)[1]);
-           fprintf(stderr, "NODE UID RST: %" PRIx64 ":%" PRIx64 "\n", ((uint64_t*)&nodeUid)[0], ((uint64_t*)&nodeUid)[1]);
+	  //fprintf(stderr, "NET UID RST: %" PRIx64 ":%" PRIx64 "\n", ((uint64_t*)&netUid)[0], ((uint64_t*)&netUid)[1]);
+          // fprintf(stderr, "NODE UID RST: %" PRIx64 ":%" PRIx64 "\n", ((uint64_t*)&nodeUid)[0], ((uint64_t*)&nodeUid)[1]);
 	   main_comm->netID = netUid;
           NCCLCHECK(ncclCommInitRankSync(&main_comm->nodeComm, main_comm->nodeSize, nodeUid, main_comm->nodeRank, NCCL_COMM_INIT_NODE, main_comm));
 	  //          NCCLCHECK(ncclCommInitRankSync(&main_comm->netComm,  main_comm->netSize,  netUid,  main_comm->netRank,  NCCL_COMM_INIT_NET, main_comm));
-           fprintf(stderr, "NODE COMM %p, NET_COMM %p\n", main_comm->nodeComm, main_comm->netComm);
+	  //fprintf(stderr, "NODE COMM %p, NET_COMM %p\n", main_comm->nodeComm, main_comm->netComm);
       }
   }
   return ncclSuccess;

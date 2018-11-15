@@ -146,13 +146,17 @@ void* persistentThread(void *opaqueInfo) {
   SetProxyReady(info);
   while (1) {
     struct ncclProxyArgs args;
+    #if 0
     if (info->func == sharpTransport.send.proxy) {
         fprintf(stderr, "BEFORE\n");
     }
+    #endif
     FifoPullArgs(info, &args);
+    #if 0
     if (info->func == sharpTransport.send.proxy) {
         fprintf(stderr, "AFTER\n");
     }
+    #endif
     if (args.active == -1) {
       // Main thread asked to stop
       return NULL;

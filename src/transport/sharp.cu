@@ -11,10 +11,7 @@
 #include "sharp/api/version.h"
 #include "sharp/api/sharp_coll.h"
 
-//extern void* sharpBootstrapCtx;
-
 struct sharpSendResources {
-  void* netSendComm;
   struct ncclSendMem* hostSendMem;
   struct ncclRecvMem* hostRecvMem;
   struct ncclSendMem* devHostSendMem;
@@ -117,8 +114,9 @@ ncclResult_t sharpProxy(struct ncclProxyArgs* args) {
 #endif // for MPI allreduce
 
   if (count != 0){
-    float *redBuf = (float*)ring->recv.conn.buff + offset;
-    struct sharp_coll_reduce_spec reduce_spec;
+    //    float *redBuf = (float*)ring->recv.conn.buff + offset;
+    float *redBuf = (float*)resources->sharpSettings->redBuf + offset;
+    struct sharp_coll_reduce_spec *reduce_spec = &resources->sharpSettings->reduce_spec;
     enum sharp_datatype sharp_type;
     enum sharp_reduce_op op_type;
     size_t dt_size;
@@ -126,31 +124,23 @@ ncclResult_t sharpProxy(struct ncclProxyArgs* args) {
     op_type = SHARP_OP_SUM;
 
     dt_size = sizeof(float);
-    reduce_spec.sbuf_desc.buffer.ptr = redBuf;
-    void *mr = NULL;
-    if (SHARP_COLL_SUCCESS != sharp_coll_reg_mr(resources->sharpSettings->sharpCtx, redBuf, count* dt_size, &mr)) {
-      WARN("Sharp reg mr failed");
-      return ncclInternalError;
-    }
-    reduce_spec.sbuf_desc.buffer.length = count * dt_size;
-    reduce_spec.sbuf_desc.buffer.mem_handle = mr;
-    reduce_spec.sbuf_desc.type = SHARP_DATA_BUFFER;
-    reduce_spec.rbuf_desc.buffer.ptr = redBuf;
-    reduce_spec.rbuf_desc.buffer.length = count * dt_size;
-    reduce_spec.rbuf_desc.buffer.mem_handle = mr;
-    reduce_spec.rbuf_desc.type = SHARP_DATA_BUFFER;
-    reduce_spec.sbuf_desc.mem_type = SHARP_MEM_TYPE_CUDA;
-    reduce_spec.rbuf_desc.mem_type = SHARP_MEM_TYPE_CUDA;
-    reduce_spec.length = count;
-    reduce_spec.dtype = sharp_type;
-    reduce_spec.op = op_type;
+    reduce_spec->sbuf_desc.buffer.ptr = redBuf;
+    void *mr = resources->sharpSettings->mr;
+    reduce_spec->sbuf_desc.buffer.length = count * dt_size;
+    reduce_spec->sbuf_desc.buffer.mem_handle = mr;
+    reduce_spec->sbuf_desc.type = SHARP_DATA_BUFFER;
+    reduce_spec->rbuf_desc.buffer.ptr = redBuf;
+    reduce_spec->rbuf_desc.buffer.length = count * dt_size;
+    reduce_spec->rbuf_desc.buffer.mem_handle = mr;
+    reduce_spec->rbuf_desc.type = SHARP_DATA_BUFFER;
+    reduce_spec->sbuf_desc.mem_type = SHARP_MEM_TYPE_CUDA;
+    reduce_spec->rbuf_desc.mem_type = SHARP_MEM_TYPE_CUDA;
+    reduce_spec->length = count;
+    reduce_spec->dtype = sharp_type;
+    reduce_spec->op = op_type;
 
-    if (SHARP_COLL_SUCCESS != sharp_coll_do_allreduce(resources->sharpSettings->sharpComm, &reduce_spec)) {
+    if (SHARP_COLL_SUCCESS != sharp_coll_do_allreduce(resources->sharpSettings->sharpComm, reduce_spec)) {
       WARN("Sharp allreduce failed");
-      return ncclInternalError;
-    }
-     if (SHARP_COLL_SUCCESS != sharp_coll_dereg_mr(resources->sharpSettings->sharpCtx, mr)) {
-      WARN("Sharp dereg mr failed");
       return ncclInternalError;
     }
   }
@@ -164,7 +154,6 @@ extern void* sharpBootstrapCtx;
 ncclResult_t sharpConnect(struct ncclConnect* connectInfo, struct ncclConnector* send) {
   // Setup device pointers
   struct sharpSendResources* resources = (struct sharpSendResources*)send->transportResources;
-  fprintf(stderr,"CREATING SHARP COMM\n");
   sharpBootstrapCtx = resources->sharpSettings->commStateNet;
   struct sharp_coll_comm_init_spec comm_spec;
   comm_spec.rank      = resources->sharpSettings->sharpCommRank;
@@ -184,8 +173,11 @@ ncclResult_t sharpConnect(struct ncclConnect* connectInfo, struct ncclConnector*
   if (ret < 0) {
     WARN("Sharp group create failed: %s(%d)", sharp_coll_strerror(ret), ret);
     return ncclInternalError;
-  } else {
-    fprintf(stderr, "SHARP GROUP CREATE SUCCESS\n");
+  }
+
+  if (SHARP_COLL_SUCCESS != sharp_coll_reg_mr(resources->sharpSettings->sharpCtx, resources->sharpSettings->redBuf, resources->sharpSettings->redBufSize, &(resources->sharpSettings->mr))){
+    WARN("Sharp reg mr failed");
+    return ncclInternalError;
   }
   
   if (resources->cudaSupport) {
@@ -206,15 +198,28 @@ ncclResult_t sharpConnect(struct ncclConnect* connectInfo, struct ncclConnector*
     send->conn.llHead = &resources->devHostSendMem->llHead;
   }
 
-  //Sharp comm init should be here.
   return ncclSuccess;
 }
 
+ncclResult_t sharpFree(void* transportResources) {
+  fprintf(stderr,"sharp free\n");
+  struct sharpSendResources* resources = (struct sharpSendResources*)transportResources;
+  NCCLCHECK(ncclCudaHostFree(resources->hostSendMem));
+  NCCLCHECK(ncclCudaHostFree(resources->hostRecvMem));
+  if (resources->cudaSupport)
+    CUDACHECK(cudaFree(resources->devNetMem));
+  if (SHARP_COLL_SUCCESS != sharp_coll_dereg_mr(resources->sharpSettings->sharpCtx, resources->sharpSettings->mr)) {
+    WARN("Sharp dereg mr failed");
+    return ncclInternalError;
+  }
+  free(resources);
+  return ncclSuccess;
+}
 struct ncclTransport sharpTransport = {
 				       "SRP",
 				       NULL,
 				       NULL,
 				       NULL,
-				       {sharpSetup, sharpConnect, NULL, sharpProxy},
-				       {sharpSetup, sharpConnect, NULL, sharpProxy}
+				       {sharpSetup, sharpConnect, sharpFree, sharpProxy},
+				       {sharpSetup, sharpConnect, sharpFree, sharpProxy}
 };

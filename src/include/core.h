@@ -137,6 +137,10 @@ struct ncclSharpContext{
   void* commStateNet;
   struct sharp_coll_context *sharpCtx;
   struct sharp_coll_comm *sharpComm;
+  struct sharp_coll_reduce_spec reduce_spec;
+  void *redBuf;
+  void *mr;
+  int redBufSize;
   int sharpCommRank;
   int sharpCommSize;
   int globalRank;
