@@ -271,10 +271,10 @@ static ncclResult_t setupRing(struct ncclComm* comm, int ringid, int rank, int n
     NCCLCHECK(bootstrapInit(&(main_comm->netID), main_comm->netRank, main_comm->netSize, &main_comm->sharpSettings.commStateNet));
     NCCLCHECK(selectTransport<2>(allInfo+rank, allInfo+next, connect+1, &ring->sharp.transport, ring));
     NCCLCHECK(transportCreateProxy(2, ring, comm));
-  }
+  } 
   NCCLCHECK(transportCreateProxy(0, ring, comm));
   NCCLCHECK(transportCreateProxy(1, ring, comm));
-
+  
   return ncclSuccess;
 }
 static ncclResult_t fillConnect(struct ncclInfo* allInfo, int nranks, int rank, int* connectTransport, ncclTvalue_t* connectValue) {
@@ -622,7 +622,7 @@ if (flags == NCCL_COMM_INIT_MAIN) {
 	init_spec.world_size = nranks;
 #if SHARP_API > SHARP_VERSION(1,4)
 	init_spec.world_local_rank = comm->nodeRank;
-	init_spec.enable_thread_support = 0;
+	init_spec.enable_thread_support = 1;
 #endif
 	init_spec.group_channel_idx = 0; //TODO support Yaniv's sharp comm layout
 	init_spec.oob_colls.barrier = oob_barrier;

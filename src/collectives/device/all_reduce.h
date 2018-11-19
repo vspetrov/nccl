@@ -30,8 +30,9 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
   WaitFlag waitReadyFromPrev(ring->recv.conn.tail, ALLREDUCE_SUBSTEPS);
   PostFlag postDoneToPrev(ring->recv.conn.head, ALLREDUCE_SUBSTEPS, NULL, 0);
   PostFlag postReadyToNext(ring->send.conn.tail, 0, ring->send.conn.fifo, ALLREDUCE_BUFCHUNKS*ALLREDUCE_SUBSTEPS);
+
   WaitFlag waitSharp(ring->sharp.conn.tail, 0);
-  PostFlag postSharp(ring->sharp.conn.head, 0, ring->sharp.conn.fifo, ALLREDUCE_SUBSTEPS);
+  PostFlag postSharp(ring->sharp.conn.head, 0, ring->sharp.conn.fifo, 3);
   typedef Primitives<UNROLL, ALLREDUCE_SUBSTEPS, T, FUNC> Prims;
 
   const ssize_t size = args->N;
@@ -129,7 +130,7 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
           step,
           waitDoneFromNext, waitReadyFromPrev,
           postReadyToNext, postDoneToPrev);
-
+    //step++;
     Prims::Copy(tid, nthreads,
           NULL,
           NULL,
@@ -152,29 +153,41 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
     NEXT_STEP;
 #endif
     __syncthreads();
+    volatile int* myFlag = ring->sharp.conn.fifo + 2;
     if (0 == tid){
       int reduceSize = max(0, min(sliceSize, maxOffset));
       postSharp.postSize(0, poffset);
-      postSharp.postSize(1, reduceSize); 
+      postSharp.postSize(1, reduceSize);
+      //      postSharp.postSize(2, 1);
+      *myFlag = 1; 
     }
-    
+    __syncthreads();
     __threadfence_system();
-    if (0 == tid)  postSharp.post(1);
-   __syncthreads();
-   if (0 == tid) waitSharp.wait(1);
+    //   if (0 == tid)  postSharp.postSize(2, 1);
+    //  __syncthreads();
+    #if 1
+    if (0 == tid) {
+      while (*myFlag == 1);
+      //     int waitVal = *ring->sharp.conn.tail + 1;
+      //     waitSharp.wait(waitVal);
+    }
    __syncthreads();
    __threadfence_system();
+   #endif
 #if 1
+   #if 0
    //is it enough to sync buffers after sharp allreduce?
-   step++;
-   Prims::Copy(tid, nthreads,
+    step++;
+      Prims::Copy(tid, nthreads,
           NULL,
           NULL,
           0, 0,
           step,
           waitReadyFromPrev,
           postDoneToPrev);
-
+   #endif
+        step++;
+ 
    Prims::DoubleCopy(tid, nthreads,
             prevInput + poffset,
             thisOutput + offset,
@@ -183,8 +196,6 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
             step,
             waitDoneFromNext, waitReadyFromPrev,
             postReadyToNext, postDoneToPrev);
-     __syncthreads();
-   __threadfence_system();
     NEXT_STEP;
 #endif
     // k-2 steps: copy to next GPU

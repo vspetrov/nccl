@@ -144,17 +144,16 @@ void* persistentThread(void *opaqueInfo) {
   cudaSetDevice(info->comm->cudaDev);
   // Signal the main thread the context is created and it can proceed.
   SetProxyReady(info);
+  volatile int a = 0;
   while (1) {
     struct ncclProxyArgs args;
-    #if 0
-    if (info->func == sharpTransport.send.proxy) {
-        fprintf(stderr, "BEFORE\n");
-    }
-    #endif
     FifoPullArgs(info, &args);
     #if 0
     if (info->func == sharpTransport.send.proxy) {
-        fprintf(stderr, "AFTER\n");
+        fprintf(stderr, "SHARP took args\n");
+    }
+    else {
+      fprintf(stderr, "Another took args A= %d\n", a);
     }
     #endif
     if (args.active == -1) {
@@ -162,9 +161,11 @@ void* persistentThread(void *opaqueInfo) {
       return NULL;
     }
     ncclResult_t res = info->func(&args);
+    #if 0
     if (info->func == sharpTransport.send.proxy) {
       return NULL;
-    }    
+    }
+    #endif
    
     if (res != ncclSuccess) {
       WARN("%s:%d -> %d [Proxy thread error]", __FILE__, __LINE__, res);
