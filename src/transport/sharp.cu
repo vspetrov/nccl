@@ -136,8 +136,8 @@ ncclResult_t sharpProxy(struct ncclProxyArgs* args) {
     reduce_spec->rbuf_desc.buffer.length = count * dt_size;
     reduce_spec->rbuf_desc.buffer.mem_handle = mr;
     reduce_spec->rbuf_desc.type = SHARP_DATA_BUFFER;
-    reduce_spec->sbuf_desc.mem_type = SHARP_MEM_TYPE_HOST;
-    reduce_spec->rbuf_desc.mem_type = SHARP_MEM_TYPE_HOST;
+    reduce_spec->sbuf_desc.mem_type = SHARP_MEM_TYPE_CUDA;
+    reduce_spec->rbuf_desc.mem_type = SHARP_MEM_TYPE_CUDA;
     reduce_spec->length = count;
     reduce_spec->dtype = sharp_type;
     reduce_spec->op = op_type;
@@ -167,7 +167,7 @@ ncclResult_t sharpConnect(struct ncclConnect* connectInfo, struct ncclConnector*
   gwr[resources->sharpSettings->localRank] = resources->sharpSettings->globalRank;
   NCCLCHECK(bootstrapAllGather(resources->sharpSettings->commStateNet, gwr, sizeof(uint32_t)));
   comm_spec.group_world_ranks = gwr;
-#endif
+#endif 
   comm_spec.is_comm_world = 0;
   comm_spec.oob_ctx   = resources->sharpSettings->commStateNet;
   int ret = sharp_coll_comm_init(resources->sharpSettings->sharpCtx, &comm_spec, (struct sharp_coll_comm **)&resources->sharpSettings->sharpComm);
@@ -177,7 +177,6 @@ ncclResult_t sharpConnect(struct ncclConnect* connectInfo, struct ncclConnector*
     WARN("Sharp group create failed: %s(%d)", sharp_coll_strerror(ret), ret);
     return ncclInternalError;
   }
-
   if (SHARP_COLL_SUCCESS != sharp_coll_reg_mr(resources->sharpSettings->sharpCtx, resources->sharpSettings->redBuf, resources->sharpSettings->redBufSize, &(resources->sharpSettings->mr))){
     WARN("Sharp reg mr failed");
     return ncclInternalError;
@@ -200,7 +199,6 @@ ncclResult_t sharpConnect(struct ncclConnect* connectInfo, struct ncclConnector*
     send->conn.head = &resources->devHostSendMem->head;
     send->conn.llHead = &resources->devHostSendMem->llHead;
   }
-
   return ncclSuccess;
 }
 

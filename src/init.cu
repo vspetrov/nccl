@@ -266,10 +266,9 @@ static ncclResult_t setupRing(struct ncclComm* comm, int ringid, int rank, int n
   NCCLCHECK(selectTransport<0>(allInfo+rank, allInfo+prev, connect+0, &ring->recv.transport, ring));
   NCCLCHECK(selectTransport<1>(allInfo+rank, allInfo+next, connect+1, &ring->send.transport, ring));
   if (flag == NCCL_COMM_INIT_NODE){
-    ring->mpiColor = comm->nodeRank;
     ring->sharpSettings = &main_comm->sharpSettings;
     NCCLCHECK(bootstrapInit(&(main_comm->netID), main_comm->netRank, main_comm->netSize, &main_comm->sharpSettings.commStateNet));
-    NCCLCHECK(selectTransport<2>(allInfo+rank, allInfo+next, connect+1, &ring->sharp.transport, ring));
+    NCCLCHECK(selectTransport<2>(allInfo+rank, allInfo+next, NULL, &ring->sharp.transport, ring));
     NCCLCHECK(transportCreateProxy(2, ring, comm));
   } 
   NCCLCHECK(transportCreateProxy(0, ring, comm));
@@ -454,7 +453,6 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, ncclUniqueId* comm
   int nranks = comm->nRanks;
   void* commState;
   NCCLCHECK(bootstrapInit(commId, rank, nranks, &commState));
-
   struct ncclInfo* allInfo;
   NCCLCHECK(ncclCalloc(&allInfo, nranks));
   NCCLCHECK(fillInfo(allInfo+rank, rank));
@@ -532,7 +530,7 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, ncclUniqueId* comm
       main_comm->sharpSettings.sharpCommSize = main_comm->netSize;
       main_comm->sharpSettings.globalRank = main_comm->rank;
       main_comm->sharpSettings.localRank = rank;
-      main_comm->sharpSettings.nComms = nranks;
+      main_comm->sharpSettings.nComms = main_comm->netSize;//nranks;
       main_comm->sharpSettings.redBuf = ring->recv.conn.buff;
       main_comm->sharpSettings.redBufSize = ring->buffSize;;
       NCCLCHECK(ring->sharp.transport->send.connect(connect+0, &ring->sharp));
@@ -722,7 +720,7 @@ ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId comm
           cudaStream_t s;
           CUDACHECK(cudaMallocManaged(&uids, 2*sizeof(ncclUniqueId)*(nranks+1)));
           CUDACHECK(cudaStreamCreate(&s));
-          if (main_comm->nodeSize > 1 && main_comm->rank == main_comm->nodeLeaderRank) {
+         if (main_comm->nodeSize > 1 && main_comm->rank == main_comm->nodeLeaderRank) {
               NCCLCHECK(ncclGetUniqueId(&uids[0]));
 	      //fprintf(stderr, "NODE UID: %" PRIx64 ":%" PRIx64 "\n", ((uint64_t*)&uids[0])[0], ((uint64_t*)&uids[0])[1]);
           }
@@ -736,7 +734,7 @@ ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId comm
           ncclUniqueId nodeUid = (uids + 2 + 2*main_comm->nodeLeaderRank)[0];
           ncclUniqueId  netUid = (uids + 2 + 2*main_comm->netLeaderRank)[1];
 	  //fprintf(stderr, "NET UID RST: %" PRIx64 ":%" PRIx64 "\n", ((uint64_t*)&netUid)[0], ((uint64_t*)&netUid)[1]);
-          // fprintf(stderr, "NODE UID RST: %" PRIx64 ":%" PRIx64 "\n", ((uint64_t*)&nodeUid)[0], ((uint64_t*)&nodeUid)[1]);
+          //fprintf(stderr, "NODE UID RST: %" PRIx64 ":%" PRIx64 "\n", ((uint64_t*)&nodeUid)[0], ((uint64_t*)&nodeUid)[1]);
 	   main_comm->netID = netUid;
           NCCLCHECK(ncclCommInitRankSync(&main_comm->nodeComm, main_comm->nodeSize, nodeUid, main_comm->nodeRank, NCCL_COMM_INIT_NODE, main_comm));
 	  //          NCCLCHECK(ncclCommInitRankSync(&main_comm->netComm,  main_comm->netSize,  netUid,  main_comm->netRank,  NCCL_COMM_INIT_NET, main_comm));

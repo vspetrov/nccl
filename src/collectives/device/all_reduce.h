@@ -153,6 +153,7 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
     NEXT_STEP;
 #endif
     __syncthreads();
+    #if 1
     volatile int* myFlag = ring->sharp.conn.fifo + 2;
     if (0 == tid){
       int reduceSize = max(0, min(sliceSize, maxOffset));
@@ -165,7 +166,6 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
     __threadfence_system();
     //   if (0 == tid)  postSharp.postSize(2, 1);
     //  __syncthreads();
-    #if 1
     if (0 == tid) {
       while (*myFlag == 1);
       //     int waitVal = *ring->sharp.conn.tail + 1;
