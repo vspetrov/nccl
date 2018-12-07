@@ -139,7 +139,9 @@ struct ncclSharpContext{
   struct sharp_coll_comm *sharpComm;
   struct sharp_coll_reduce_spec reduce_spec;
   void *redBuf;
+  void *llRedBuf;
   void *mr;
+  void *llmr;
   int redBufSize;
   int sharpCommRank;
   int sharpCommSize;

@@ -292,7 +292,7 @@ __device__ void ncclAllReduceLLKernel(struct CollectiveArgs* args) {
   typedef LLPrimitives<T, FUNC> LL;
 
   const ssize_t size = args->N;
-  //const int rank = comm->rank;
+  const int rank = comm->rank;
   const int nranks = comm->nRanks;
   ssize_t chunkSize = NCCL_LL_SLICE_LINES * sizeof(uint64_t) / sizeof(T);
   const ssize_t loopSize = args->nRings*nranks*chunkSize;
@@ -301,6 +301,7 @@ __device__ void ncclAllReduceLLKernel(struct CollectiveArgs* args) {
   uint32_t pflag, nflag = step + 1;
   int poffset, noffset = NCCL_LL_SLICE_LINES * STEP_TO_SLOT(step);
 
+  int grank = ring->sharp.conn.llFifo[3];
   // Compute pointers
   const T * __restrict__ thisInput = (const T*)args->ThisInput;
   T * __restrict__ thisOutput = (T*)args->ThisOutput;
@@ -356,6 +357,58 @@ __device__ void ncclAllReduceLLKernel(struct CollectiveArgs* args) {
     offset = chunkOffset + slice * chunkSize;
     maxOffset = min(chunkSize, size-offset);
 
+    #if 1
+    T * __restrict__ sharpRedBuf = (T*)ring->sharp.conn.llBuff;
+    LL::ReduceCopy(thisInput + offset,
+	           prevInput + poffset,
+		   sharpRedBuf,
+		   maxOffset, pflag, llNthreads);
+    //pflag = nflag;
+    // nflag++;
+
+    //    ACK_PREV;
+    volatile int* myFlag = ring->sharp.conn.llFifo;
+    volatile int* myFlag2 = ring->sharp.conn.llFifo + 2;
+
+#if 0    
+    if (tid == 0)
+        printf("start sharp %d\n", grank);
+#endif
+    if (0 == tid){
+          myFlag[0] = 0;
+    myFlag[1] = maxOffset;
+    myFlag[2] = 1;
+
+      int notReady = 1;
+      while (notReady == 1)
+      {
+	notReady = *myFlag2;
+      }
+    }
+#if 0
+    if (tid == 0 || tid == llNthreads-1)
+      printf("before ack %d %d\n", grank, tid);
+    ACK_PREV;
+    //    __syncthreads();
+    if (tid == 0)
+        printf("finish sharp %d\n", grank);
+#endif
+    WAIT_NEXT;
+    LL::ReduceCopy(sharpRedBuf,
+		   thisOutput + offset,
+		   nextOutput + noffset,
+		   maxOffset, nflag, llNthreads);
+    //pflag = nflag;
+    //nflag++;
+#if 0    
+    if (tid == 0)
+      printf("second reduce copy %d\n", grank);
+#endif
+    POST_SIZE;
+    
+    // ACK_PREV;
+    #endif
+#if 0 // original NCCL 
     WAIT_NEXT;
     LL::ReduceCopy(
         thisInput  + offset,
@@ -365,9 +418,11 @@ __device__ void ncclAllReduceLLKernel(struct CollectiveArgs* args) {
         maxOffset, pflag, nflag, llNthreads);
     POST_SIZE;
     ACK_PREV;
-
+#endif
     NEXT_STEP_LL;
 
+    //    if (tid == 0)
+    //      printf("Third reduce copy %d\n", myFlag[0]);
     // k-2 steps: copy to next GPU
     for (int j=1; j<nranks-1; ++j) {
       slice = ring->devUserRanks[nranks - j];
@@ -390,7 +445,10 @@ __device__ void ncclAllReduceLLKernel(struct CollectiveArgs* args) {
     slice = ring->devUserRanks[1];
     offset = chunkOffset + slice * chunkSize;
     maxOffset = min(chunkSize, size-offset);
-
+#if 0
+    if (tid == 0)
+      printf("final reduce copy %d\n", grank);
+#endif
     // Here we need to copy from buffer to this output.
     LL::ReduceCopy(
         prevInput + poffset,
