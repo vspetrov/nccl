@@ -76,16 +76,19 @@ ncclResult_t sharpProxy(struct ncclProxyArgs* args) {
 
   //  while (!sizesFifo[2]){
 
+  //int iter = 0;
+  while(1){
   volatile int* myFlag =  sizesFifo;
   while(sizesFifo[2] == 0){
     ;;
   }
   int rank, lrank;
   int offset, count;
+  
   offset = llMode? sizesFifo[0]:sizesFifo[0];
   count  = llMode? sizesFifo[1]:sizesFifo[1];
   if (count >= 0){
-    //    fprintf(stderr, "Start sharp rank=%d count=%d\n", resources->sharpSettings->globalRank, count);
+    
 
     //    float *redBuf = (float*)ring->recv.conn.buff + offset;
     float *redBuf;
@@ -95,6 +98,8 @@ ncclResult_t sharpProxy(struct ncclProxyArgs* args) {
     else{
       redBuf = (float*)resources->sharpSettings->redBuf + offset;
     }
+    //    fprintf(stderr, "Start sharp rank=%d count=%d val=%f iter=%d\n", resources->sharpSettings->globalRank, count, redBuf[count-1], iter );
+    //iter++;
     //  if (resources->sharpSettings->globalRank == 0)
     //   fprintf(stderr, "step = %d start = %f\n", (int)(*prevTail), redBuf[0]);
     //    fprintf(stderr, "rank = %d, size=%d\n", resources->sharpSettings->globalRank, count);
@@ -115,23 +120,31 @@ ncclResult_t sharpProxy(struct ncclProxyArgs* args) {
     reduce_spec->rbuf_desc.buffer.length = count * dt_size;
     reduce_spec->rbuf_desc.buffer.mem_handle = mr;
     reduce_spec->rbuf_desc.type = SHARP_DATA_BUFFER;
-    reduce_spec->sbuf_desc.mem_type = SHARP_MEM_TYPE_CUDA;
-    reduce_spec->rbuf_desc.mem_type = SHARP_MEM_TYPE_CUDA;
+    reduce_spec->sbuf_desc.mem_type = SHARP_MEM_TYPE_HOST;
+    reduce_spec->rbuf_desc.mem_type = SHARP_MEM_TYPE_HOST;
     reduce_spec->length = count;
     reduce_spec->dtype = sharp_type;
     reduce_spec->op = op_type;
+    #if 1
     if (SHARP_COLL_SUCCESS != sharp_coll_do_allreduce(resources->sharpSettings->sharpComm, reduce_spec)) {
       WARN("Sharp allreduce failed");
       return ncclInternalError;
     }
+    #endif
   }
+  
+  
   //    fprintf(stderr, "finished sharp\n");
   volatile int* flag2 = sizesFifo +2;
+  bool lastForThisColl = (*flag2==-1);
   //    sizesFifo[2] = 0;
   *flag2 = 0;
   __sync_synchronize();
+  if (lastForThisColl)
+    break;
   //++(*prevHead);  
-    // ++(*prevTail);  
+    // ++(*prevTail);
+  }
   return ncclSuccess;
 }
 

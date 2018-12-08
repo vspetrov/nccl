@@ -301,8 +301,7 @@ __device__ void ncclAllReduceLLKernel(struct CollectiveArgs* args) {
   uint32_t pflag, nflag = step + 1;
   int poffset, noffset = NCCL_LL_SLICE_LINES * STEP_TO_SLOT(step);
 
-  int grank = ring->sharp.conn.llFifo[3];
-  // Compute pointers
+   // Compute pointers
   const T * __restrict__ thisInput = (const T*)args->ThisInput;
   T * __restrict__ thisOutput = (T*)args->ThisOutput;
   union ncclLLFifoLine * prevInput = (union ncclLLFifoLine *)ring->recv.conn.llBuff;
@@ -357,57 +356,41 @@ __device__ void ncclAllReduceLLKernel(struct CollectiveArgs* args) {
     offset = chunkOffset + slice * chunkSize;
     maxOffset = min(chunkSize, size-offset);
 
-    #if 1
+#if 1
     T * __restrict__ sharpRedBuf = (T*)ring->sharp.conn.llBuff;
     LL::ReduceCopy(thisInput + offset,
 	           prevInput + poffset,
 		   sharpRedBuf,
 		   maxOffset, pflag, llNthreads);
-    //pflag = nflag;
-    // nflag++;
-
-    //    ACK_PREV;
+    ACK_PREV;
+    WAIT_NEXT;
+#if 1
+    __threadfence_system();
     volatile int* myFlag = ring->sharp.conn.llFifo;
     volatile int* myFlag2 = ring->sharp.conn.llFifo + 2;
 
-#if 0    
-    if (tid == 0)
-        printf("start sharp %d\n", grank);
-#endif
     if (0 == tid){
           myFlag[0] = 0;
     myFlag[1] = maxOffset;
-    myFlag[2] = 1;
+    myFlag[2] = (gridOffset + loopSize) < size ? 1 : -1;
 
-      int notReady = 1;
-      while (notReady == 1)
+      int notReady = myFlag[2];
+      while (notReady != 0)
       {
 	notReady = *myFlag2;
       }
     }
-#if 0
-    if (tid == 0 || tid == llNthreads-1)
-      printf("before ack %d %d\n", grank, tid);
-    ACK_PREV;
-    //    __syncthreads();
-    if (tid == 0)
-        printf("finish sharp %d\n", grank);
+    __threadfence_system();
 #endif
     WAIT_NEXT;
     LL::ReduceCopy(sharpRedBuf,
 		   thisOutput + offset,
 		   nextOutput + noffset,
 		   maxOffset, nflag, llNthreads);
-    //pflag = nflag;
-    //nflag++;
-#if 0    
-    if (tid == 0)
-      printf("second reduce copy %d\n", grank);
-#endif
     POST_SIZE;
     
     // ACK_PREV;
-    #endif
+#endif
 #if 0 // original NCCL 
     WAIT_NEXT;
     LL::ReduceCopy(
@@ -445,10 +428,7 @@ __device__ void ncclAllReduceLLKernel(struct CollectiveArgs* args) {
     slice = ring->devUserRanks[1];
     offset = chunkOffset + slice * chunkSize;
     maxOffset = min(chunkSize, size-offset);
-#if 0
-    if (tid == 0)
-      printf("final reduce copy %d\n", grank);
-#endif
+
     // Here we need to copy from buffer to this output.
     LL::ReduceCopy(
         prevInput + poffset,
