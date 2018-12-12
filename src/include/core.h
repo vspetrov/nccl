@@ -141,13 +141,17 @@ struct ncclSharpContext{
   void *redBuf;
   void *llRedBuf;
   void *mr;
+  void **mrs;
   void *llmr;
   int redBufSize;
   int sharpCommRank;
   int sharpCommSize;
+  int nodeCommSize;
+  int nodeLeaderRank;
   int globalRank;
   int localRank;
   int nComms;
+  void *oobNodeContext;
 };
 
 struct ncclRing {

@@ -120,12 +120,13 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
     maxOffset = min(chunkSize, size-offset);
     
 #if 1
+    T * __restrict__ sharpRedBuf = (T*)ring->sharp.conn.buff;
     //my reduce
     Prims::Reduce(tid, nthreads,
           prevInput  + poffset,
           thisInput  + offset,
     //	  nextdirect ? (sharedNextOutput + offset) : (nextOutput + noffset),
-		  prevInput + poffset,
+	  sharpRedBuf + poffset,
           sliceSize, maxOffset,
           step,
           waitDoneFromNext, waitReadyFromPrev,
@@ -157,7 +158,7 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
     volatile int* myFlag = ring->sharp.conn.fifo + 2;
     if (0 == tid){
       int reduceSize = max(0, min(sliceSize, maxOffset));
-      postSharp.postSize(0, poffset);
+      postSharp.postSize(0, 0);
       postSharp.postSize(1, reduceSize);
       //      postSharp.postSize(2, 1);
       *myFlag = -1; 
@@ -190,7 +191,7 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
         step++;
  
    Prims::DoubleCopy(tid, nthreads,
-            prevInput + poffset,
+            sharpRedBuf,
             thisOutput + offset,
             nextdirect ? (sharedNextOutput + offset) : (nextOutput + noffset),
             sliceSize, maxOffset,
