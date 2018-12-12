@@ -114,9 +114,15 @@ ncclResult_t ncclGetUniqueId(ncclUniqueId* out) {
 static ncclResult_t commFree(ncclComm_t comm) {
   if (comm == NULL)
     return ncclSuccess;
-
   CUDACHECK(cudaFree(comm->devComm));
 
+  if (comm->sharpSettings.sharpCtx != NULL){
+    if (SHARP_COLL_SUCCESS != sharp_coll_finalize(comm->sharpSettings.sharpCtx)){
+      WARN("Sharp ctx finalize failed");
+      return ncclInternalError;
+    }
+    comm->sharpSettings.sharpCtx = NULL;
+  }
   for (int ring=0; ring<comm->nRings; ring++)
     NCCLCHECK(freeRing(comm->rings+ring));
 
@@ -137,7 +143,6 @@ static ncclResult_t commFree(ncclComm_t comm) {
     free(comm->intraCGMode);
     free(comm->intraCC);
   }
-
   free(comm);
   return ncclSuccess;
 }
@@ -914,6 +919,7 @@ ncclResult_t ncclCommDestroy(ncclComm_t comm) {
 
   if (comm == NULL)
     return ncclSuccess;
+  ncclCommDestroy(comm->nodeComm);
   int savedDevice;
   CUDACHECK(cudaGetDevice(&savedDevice));
   int commDevice = comm->cudaDev;

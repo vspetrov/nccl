@@ -67,7 +67,7 @@ static void create_iov_buffer(struct sharp_coll_data_desc *desc, int iov_count, 
 	desc->iov.vector[0].ptr = resources->sharpSettings->redBuf;
 	desc->iov.vector[0].mem_handle = resources->sharpSettings->mrs[0];
 	desc->iov.vector[0].length = length;
-#if 0
+#if 1
 	for (int i = 1; i < iov_count; i++) {
 		desc->iov.vector[i].ptr = resources->nodeRanksBuf[i].remPtr;
 		desc->iov.vector[i].mem_handle = resources->sharpSettings->mrs[i];
@@ -114,7 +114,7 @@ ncclResult_t sharpProxy(struct ncclProxyArgs* args) {
       redBuf = (float*)resources->sharpSettings->redBuf + offset;
     }
 #endif
-    //fprintf(stderr, "Start sharp rank=%d count=%d  iter=%d\n", resources->sharpSettings->globalRank, count, iter );
+    fprintf(stderr, "Start sharp rank=%d count=%d  iter=%d\n", resources->sharpSettings->globalRank, count, iter );
     // iter++;
     //  if (resources->sharpSettings->globalRank == 0)
     //   fprintf(stderr, "step = %d start = %f\n", (int)(*prevTail), redBuf[0]);
@@ -129,8 +129,8 @@ ncclResult_t sharpProxy(struct ncclProxyArgs* args) {
     dt_size = sizeof(float);
     void *mr = llMode ? resources->sharpSettings->llmr : resources->sharpSettings->mr;
 
-    create_iov_buffer(&reduce_spec->sbuf_desc, resources->sharpSettings->nodeCommSize,  resources, count * dt_size);
-    create_iov_buffer(&reduce_spec->rbuf_desc, resources->sharpSettings->nodeCommSize,  resources, count * dt_size);
+    create_iov_buffer(&reduce_spec->sbuf_desc, 1/*resources->sharpSettings->nodeCommSize*/,  resources, count * dt_size);
+    create_iov_buffer(&reduce_spec->rbuf_desc, 1/*resources->sharpSettings->nodeCommSize*/,  resources, count * dt_size);
     #if 0
     reduce_spec->sbuf_desc.buffer.ptr = redBuf;    
     reduce_spec->sbuf_desc.buffer.length = count * dt_size;
@@ -230,31 +230,32 @@ ncclResult_t sharpConnect(struct ncclConnect* connectInfo, struct ncclConnector*
       }
     }
     NCCLCHECK(ncclCalloc(&(resources->sharpSettings->mrs), resources->sharpSettings->nodeCommSize));
-  }
   
-  //setup sharp
-  sharpBootstrapCtx = resources->sharpSettings->commStateNet;
-  struct sharp_coll_comm_init_spec comm_spec;
-  comm_spec.rank      = resources->sharpSettings->sharpCommRank;
-  comm_spec.size      = resources->sharpSettings->sharpCommSize;
-  uint32_t *gwr = NULL;
+  
+    //setup sharp
+    sharpBootstrapCtx = resources->sharpSettings->commStateNet;
+    struct sharp_coll_comm_init_spec comm_spec;
+    comm_spec.rank      = resources->sharpSettings->sharpCommRank;
+    comm_spec.size      = resources->sharpSettings->sharpCommSize;
+    uint32_t *gwr = NULL;
 #if SHARP_API > SHARP_VERSION(1,4)
-  gwr = (uint32_t*)malloc(resources->sharpSettings->nComms*sizeof(uint32_t));
-  gwr[resources->sharpSettings->localRank] = resources->sharpSettings->globalRank;
-  NCCLCHECK(bootstrapAllGather(resources->sharpSettings->commStateNet, gwr, sizeof(uint32_t)));
-  comm_spec.group_world_ranks = gwr;
+    gwr = (uint32_t*)malloc(resources->sharpSettings->nComms*sizeof(uint32_t));
+    gwr[resources->sharpSettings->localRank] = resources->sharpSettings->globalRank;
+    NCCLCHECK(bootstrapAllGather(resources->sharpSettings->commStateNet, gwr, sizeof(uint32_t)));
+    comm_spec.group_world_ranks = gwr;
 #endif
   
-  comm_spec.is_comm_world = 0;
-  comm_spec.oob_ctx   = resources->sharpSettings->commStateNet;
-  int ret = sharp_coll_comm_init(resources->sharpSettings->sharpCtx, &comm_spec, (struct sharp_coll_comm **)&resources->sharpSettings->sharpComm);
-  //->sharpCtx = main_comm->sharpSettings.sharpCtx;
-  if (gwr) free(gwr);
-  if (ret < 0) {
-    WARN("Sharp group create failed: %s(%d)", sharp_coll_strerror(ret), ret);
-    return ncclInternalError;
+    comm_spec.is_comm_world = 0;
+    comm_spec.oob_ctx   = resources->sharpSettings->commStateNet;
+    int ret = sharp_coll_comm_init(resources->sharpSettings->sharpCtx, &comm_spec, (struct sharp_coll_comm **)&resources->sharpSettings->sharpComm);
+    //->sharpCtx = main_comm->sharpSettings.sharpCtx;
+    if (gwr) free(gwr);
+    if (ret < 0) {
+      WARN("Sharp group create failed: %s(%d)", sharp_coll_strerror(ret), ret);
+      return ncclInternalError;
+    }
   }
-  #if 1
+#if 1
   if (resources->sharpSettings->globalRank == resources->sharpSettings->nodeLeaderRank){
     if (SHARP_COLL_SUCCESS != sharp_coll_reg_mr(resources->sharpSettings->sharpCtx, resources->sharpSettings->redBuf, resources->sharpSettings->redBufSize, &(resources->sharpSettings->mrs[0]))){
       WARN("Sharp reg mr failed for reduction buffer");
@@ -281,7 +282,6 @@ ncclResult_t sharpConnect(struct ncclConnect* connectInfo, struct ncclConnector*
 }
 
 ncclResult_t sharpFree(void* transportResources) {
-  fprintf(stderr,"sharp free\n");
   struct sharpSendResources* resources = (struct sharpSendResources*)transportResources;
   NCCLCHECK(ncclCudaHostFree(resources->hostSendMem));
   NCCLCHECK(ncclCudaHostFree(resources->hostRecvMem));
@@ -294,6 +294,11 @@ ncclResult_t sharpFree(void* transportResources) {
 	WARN("Sharp dereg mr failed");
 	return ncclInternalError;
       }
+      if (resources->sharpSettings->sharpComm != NULL){
+	if (SHARP_COLL_SUCCESS !=sharp_coll_comm_destroy(resources->sharpSettings->sharpComm))
+	  WARN("Sharp coll comm destroy failed");	
+      }
+      resources->sharpSettings->sharpComm = NULL;
     }
     for(int r = 1; r < resources->sharpSettings->nodeCommSize; r++){
       CUDACHECK(cudaIpcCloseMemHandle(resources->nodeRanksBuf[r].remPtr));
