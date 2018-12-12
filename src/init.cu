@@ -532,7 +532,7 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, ncclUniqueId* comm
       main_comm->sharpSettings.localRank = rank;
       main_comm->sharpSettings.nComms = main_comm->netSize;//nranks;
       main_comm->sharpSettings.redBuf = ring->recv.conn.buff;
-      main_comm->sharpSettings.llRedBuf = (void*)ring->sharp.conn.llBuff;
+      //      main_comm->sharpSettings.llRedBuf = (void*)ring->sharp.conn.llBuff;
       main_comm->sharpSettings.redBufSize = ring->buffSize;;
       NCCLCHECK(ring->sharp.transport->send.connect(connect+0, &ring->sharp));
     }

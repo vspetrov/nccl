@@ -160,19 +160,20 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
       postSharp.postSize(0, poffset);
       postSharp.postSize(1, reduceSize);
       //      postSharp.postSize(2, 1);
-      *myFlag = 1; 
+      *myFlag = -1; 
     }
     __syncthreads();
     __threadfence_system();
     //   if (0 == tid)  postSharp.postSize(2, 1);
     //  __syncthreads();
     if (0 == tid) {
-      while (*myFlag == 1);
+      while (*myFlag == -1);
       //     int waitVal = *ring->sharp.conn.tail + 1;
       //     waitSharp.wait(waitVal);
     }
    __syncthreads();
    __threadfence_system();
+   
    #endif
 #if 1
    #if 0
@@ -355,7 +356,7 @@ __device__ void ncclAllReduceLLKernel(struct CollectiveArgs* args) {
     slice = ring->devUserRanks[0];
     offset = chunkOffset + slice * chunkSize;
     maxOffset = min(chunkSize, size-offset);
-
+    
 #if 1
     T * __restrict__ sharpRedBuf = (T*)ring->sharp.conn.llBuff;
     LL::ReduceCopy(thisInput + offset,

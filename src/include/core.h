@@ -98,7 +98,7 @@ struct ncclConnector {
 #define CUDA_IPC_MIN 2097152UL /* 2MiB - not currently used */
 
 #define NCCL_LL_CHUNKS 8
-#define NUM_LINES_PER_THREAD 2
+#define NUM_LINES_PER_THREAD 4
 #define NCCL_LL_BUFF_SIZE (NUM_LINES_PER_THREAD*NCCL_LL_MAX_NTHREADS*NCCL_LL_CHUNKS*sizeof(union ncclLLFifoLine)) // 64K
 #define NCCL_LL_BUFF_LINES (NCCL_LL_BUFF_SIZE / (2*sizeof(uint64_t)))
 #define NCCL_LL_SLICE_LINES (NCCL_LL_BUFF_LINES / NCCL_LL_CHUNKS)

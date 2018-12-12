@@ -27,21 +27,6 @@ struct sharpSendResources {
   struct ncclSharpContext *sharpSettings;
 };
 
-#if 0
-struct sharpRecvResources {
-  void* netListenComm;
-  void* netRecvComm;
-  struct ncclSendMem* hostSendMem;
-  struct ncclRecvMem* hostRecvMem;
-  struct ncclSendMem* devHostSendMem;
-  struct ncclRecvMem* devHostRecvMem;
-  struct ncclRecvMem* hostDevMem;
-  int netDev;
-  bool cudaSupport;
-  uint64_t llStep;
-  uint64_t llLastCleaning;
-};
-#endif
 ncclResult_t sharpSetup(ncclTinfo_t* myOpaqueInfo, ncclTinfo_t* peerOpaqueInfo, struct ncclConnect* connectInfo, struct ncclRing* ring) {
   struct sharpSendResources* resources;
   NCCLCHECK(ncclCalloc(&resources, 1));
@@ -52,7 +37,9 @@ ncclResult_t sharpSetup(ncclTinfo_t* myOpaqueInfo, ncclTinfo_t* peerOpaqueInfo, 
   if (resources->cudaSupport) {
     NCCLCHECK(ncclCudaCalloc((char**)(&resources->devNetMem), size));
   }
-  NCCLCHECK(ncclCudaHostAlloc((void**)&resources->sharpBuf, (void**)&resources->devSharpBuf, ring->buffSize));
+  //NCCLCHECK(ncclCudaHostAlloc((void**)&resources->sharpBuf, (void**)&resources->devSharpBuf, NCCL_LL_BUFF_SIZE));
+  NCCLCHECK(ncclCudaCalloc((char**)&resources->sharpBuf, ring->buffSize));
+  resources->devSharpBuf = resources->sharpBuf;
   NCCLCHECK(ncclCudaHostAlloc((void**)&resources->hostRecvMem, (void**)&resources->devHostRecvMem, size));
   NCCLCHECK(ncclCudaHostAlloc((void**)&resources->hostSendMem, (void**)&resources->devHostSendMem, size));
   resources->sharpSettings = ring->sharpSettings;
@@ -76,7 +63,7 @@ ncclResult_t sharpProxy(struct ncclProxyArgs* args) {
 
   //  while (!sizesFifo[2]){
 
-  //int iter = 0;
+  int iter = 0;
   while(1){
   volatile int* myFlag =  sizesFifo;
   while(sizesFifo[2] == 0){
@@ -98,8 +85,8 @@ ncclResult_t sharpProxy(struct ncclProxyArgs* args) {
     else{
       redBuf = (float*)resources->sharpSettings->redBuf + offset;
     }
-    //    fprintf(stderr, "Start sharp rank=%d count=%d val=%f iter=%d\n", resources->sharpSettings->globalRank, count, redBuf[count-1], iter );
-    //iter++;
+    fprintf(stderr, "Start sharp rank=%d count=%d  iter=%d\n", resources->sharpSettings->globalRank, count, iter );
+    // iter++;
     //  if (resources->sharpSettings->globalRank == 0)
     //   fprintf(stderr, "step = %d start = %f\n", (int)(*prevTail), redBuf[0]);
     //    fprintf(stderr, "rank = %d, size=%d\n", resources->sharpSettings->globalRank, count);
@@ -120,8 +107,8 @@ ncclResult_t sharpProxy(struct ncclProxyArgs* args) {
     reduce_spec->rbuf_desc.buffer.length = count * dt_size;
     reduce_spec->rbuf_desc.buffer.mem_handle = mr;
     reduce_spec->rbuf_desc.type = SHARP_DATA_BUFFER;
-    reduce_spec->sbuf_desc.mem_type = SHARP_MEM_TYPE_HOST;
-    reduce_spec->rbuf_desc.mem_type = SHARP_MEM_TYPE_HOST;
+    reduce_spec->sbuf_desc.mem_type = SHARP_MEM_TYPE_CUDA;
+    reduce_spec->rbuf_desc.mem_type = SHARP_MEM_TYPE_CUDA;
     reduce_spec->length = count;
     reduce_spec->dtype = sharp_type;
     reduce_spec->op = op_type;
@@ -186,7 +173,8 @@ ncclResult_t sharpConnect(struct ncclConnect* connectInfo, struct ncclConnector*
   gwr[resources->sharpSettings->localRank] = resources->sharpSettings->globalRank;
   NCCLCHECK(bootstrapAllGather(resources->sharpSettings->commStateNet, gwr, sizeof(uint32_t)));
   comm_spec.group_world_ranks = gwr;
-#endif 
+#endif
+  
   comm_spec.is_comm_world = 0;
   comm_spec.oob_ctx   = resources->sharpSettings->commStateNet;
   int ret = sharp_coll_comm_init(resources->sharpSettings->sharpCtx, &comm_spec, (struct sharp_coll_comm **)&resources->sharpSettings->sharpComm);
@@ -196,12 +184,14 @@ ncclResult_t sharpConnect(struct ncclConnect* connectInfo, struct ncclConnector*
     WARN("Sharp group create failed: %s(%d)", sharp_coll_strerror(ret), ret);
     return ncclInternalError;
   }
+  #if 0
   if (SHARP_COLL_SUCCESS != sharp_coll_reg_mr(resources->sharpSettings->sharpCtx, resources->sharpSettings->redBuf, resources->sharpSettings->redBufSize, &(resources->sharpSettings->mr))){
     WARN("Sharp reg mr failed for reduction buffer");
     return ncclInternalError;
   }
+  #endif
   #if 1
-  if (SHARP_COLL_SUCCESS != sharp_coll_reg_mr(resources->sharpSettings->sharpCtx, resources->sharpSettings->llRedBuf, resources->sharpSettings->redBufSize, &(resources->sharpSettings->llmr))){
+  if (SHARP_COLL_SUCCESS != sharp_coll_reg_mr(resources->sharpSettings->sharpCtx, resources->sharpSettings->llRedBuf, NCCL_LL_BUFF_SIZE, &(resources->sharpSettings->llmr))){
     WARN("Sharp reg mr failed for reduction buffer");
     return ncclInternalError;
   }
