@@ -112,7 +112,6 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
 
       NEXT_STEP;
     }
-
     // step k-1: reduce this buffer and data, which will produce the final
     // result that we store in this data and push to the next GPU
     slice = ring->devUserRanks[0];
@@ -126,7 +125,7 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
           prevInput  + poffset,
           thisInput  + offset,
     //	  nextdirect ? (sharedNextOutput + offset) : (nextOutput + noffset),
-	  sharpRedBuf + poffset,
+	  sharpRedBuf,
           sliceSize, maxOffset,
           step,
           waitDoneFromNext, waitReadyFromPrev,
@@ -155,22 +154,17 @@ __device__ void ncclAllReduceKernel(struct CollectiveArgs* args) {
 #endif
     __syncthreads();
     #if 1
+
     volatile int* myFlag = ring->sharp.conn.fifo + 2;
     if (0 == tid){
       int reduceSize = max(0, min(sliceSize, maxOffset));
       postSharp.postSize(0, 0);
       postSharp.postSize(1, reduceSize);
-      //      postSharp.postSize(2, 1);
-      *myFlag = -1; 
-    }
-    __syncthreads();
-    __threadfence_system();
-    //   if (0 == tid)  postSharp.postSize(2, 1);
-    //  __syncthreads();
-    if (0 == tid) {
-      while (*myFlag == -1);
-      //     int waitVal = *ring->sharp.conn.tail + 1;
-      //     waitSharp.wait(waitVal);
+      *myFlag = (gridOffset + nranks*loopSize) < size ? 1:-1;
+      int notReady = *myFlag;
+      while (notReady != 0){
+	notReady = *myFlag;
+      }
     }
    __syncthreads();
    __threadfence_system();

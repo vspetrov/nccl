@@ -115,7 +115,16 @@ static ncclResult_t commFree(ncclComm_t comm) {
   if (comm == NULL)
     return ncclSuccess;
   CUDACHECK(cudaFree(comm->devComm));
-
+  #if 0
+  if (comm->sharpSettings.globalRank == comm->sharpSettings.nodeLeaderRank){
+    if (comm->sharpSettings.sharpComm != NULL){
+      fprintf(stderr, "!!!Sharp coll comm destroy\n");
+      if (SHARP_COLL_SUCCESS !=sharp_coll_comm_destroy(comm->sharpSettings.sharpComm))
+	WARN("Sharp coll comm destroy failed");
+      comm->sharpSettings.sharpComm = NULL;
+    }
+  }
+  #if 0
   if (comm->sharpSettings.sharpCtx != NULL){
     if (SHARP_COLL_SUCCESS != sharp_coll_finalize(comm->sharpSettings.sharpCtx)){
       WARN("Sharp ctx finalize failed");
@@ -123,8 +132,12 @@ static ncclResult_t commFree(ncclComm_t comm) {
     }
     comm->sharpSettings.sharpCtx = NULL;
   }
+  #endif
+  #endif
+
   for (int ring=0; ring<comm->nRings; ring++)
     NCCLCHECK(freeRing(comm->rings+ring));
+
 
   if (comm->doneEvent != NULL)
     CUDACHECK(cudaEventDestroy(comm->doneEvent));
@@ -621,6 +634,7 @@ if (flags == NCCL_COMM_INIT_MAIN) {
       fprintf(stderr, "rank %d noderank %d netrank %d\n", comm->rank, comm->nodeRank, comm->netRank);
 #endif
       {
+	if (1){//comm->nodeRank == comm->nodeLeaderRank){
 	sharpBootstrapCtx = commState;
 	struct sharp_coll_init_spec init_spec = {0};
 	init_spec.job_id = 0xdeadbeaf;
@@ -644,6 +658,7 @@ if (flags == NCCL_COMM_INIT_MAIN) {
 	if (sharp_coll_init(&init_spec, &comm->sharpSettings.sharpCtx) < 0) {	  
           WARN("Sharp coll init error");
           return ncclInternalError;
+	}
 	}
       }
  }

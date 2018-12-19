@@ -328,3 +328,17 @@ int oob_bcast(void *ctx, void *buf, int size, int root) {
     free(tmp);
     return 0;
 }
+
+int  bootstrapBcast(void *ctx, void *buf, int size, int root) {
+    struct extState* state = (struct extState*)ctx;
+    void *tmp = malloc(size*state->nranks);
+    if (state->rank == root) {
+        memcpy((void*)((ptrdiff_t)tmp+size*state->rank), buf, size);
+    }
+    bootstrapAllGather(state, tmp, size);
+    if (state->rank != root) {
+        memcpy(buf, (void*)((ptrdiff_t)tmp+size*root), size);
+    }
+    free(tmp);
+    return 0;  
+}

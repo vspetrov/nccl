@@ -19,4 +19,5 @@ ncclResult_t bootstrapClose(void* commState);
 int oob_barrier(void *ctx);
 int oob_gather(void *ctx, int root, void *sbuf, void *rbuf, int size);
 int oob_bcast(void *ctx, void *buf, int size, int root);
+int  bootstrapBcast(void *ctx, void *buf, int size, int root);
 #endif
